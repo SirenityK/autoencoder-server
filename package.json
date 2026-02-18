@@ -3,28 +3,46 @@
     "dev": "vike dev",
     "build": "vike build",
     "preview": "vike build && vike preview",
+    "test": "bun test",
     "lint": "biome lint --write .",
     "format": "biome format --write .",
-    "prod": "vike build && node ./dist/server/index.mjs"
+    "prod": "vike build && node ./dist/server/index.mjs",
+    "worker": "bun run server/worker.ts",
+    "worker:dev": "bun run --watch server/worker.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1036.0",
+    "@aws-sdk/lib-storage": "^3.1037.0",
+    "@aws-sdk/s3-request-presigner": "^3.1036.0",
+    "@babel/preset-typescript": "^7.28.5",
+    "@solid-primitives/storage": "^4.3.4",
     "@universal-middleware/core": "^0.4.17",
     "@vikejs/hono": "^0.2.0",
+    "bullmq": "^5.76.1",
+    "clsx": "^2.1.1",
+    "fluent-ffmpeg": "^2.1.3",
     "hono": "^4.12.12",
+    "ioredis": "^5.10.1",
+    "lucide-solid": "^1.8.0",
     "solid-js": "^1.9.12",
+    "tailwind-merge": "^3.5.0",
     "telefunc": "^0.2.20",
+    "ts-extras": "^1.0.0",
+    "valibot": "^1.3.1",
     "vike": "0.4.257",
     "vike-solid": "^0.8.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.11",
-    "@tailwindcss/vite": "^4.2.2",
+    "@tailwindcss/vite": "4.2.2",
     "@types/node": "^20.19.37",
     "daisyui": "^5.5.19",
-    "tailwindcss": "^4.2.2",
+    "tailwindcss": "4.2.2",
+    "type-fest": "^5.6.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.8",
     "vite-plugin-solid": "^2.11.12"
   },
-  "type": "module"
+  "type": "module",
+  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
 }
