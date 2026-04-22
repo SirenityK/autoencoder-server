@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+input:not([type="checkbox"]):not([type="radio"]),
+select {
+  @apply w-full;
+}
+
+@layer base {
+  .fieldset-legend {
+    @apply text-lg;
+  }
+}

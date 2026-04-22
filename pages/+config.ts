@@ -6,8 +6,8 @@ import vikeSolid from "vike-solid/config";
 
 const config: Config = {
   // https://vike.dev/head-tags
-  title: "My Vike App",
-  description: "Demo showcasing Vike",
+  title: "Autoencoder",
+  description: "A video encoding server built with Vike and SolidJS",
 
   extends: [vikeSolid],
 };

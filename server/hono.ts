@@ -1,6 +1,6 @@
-import { telefuncHandler } from "./telefunc-handler";
 import vike from "@vikejs/hono";
 import { Hono } from "hono";
+import { telefuncHandler } from "./telefunc-handler";
 
 function getApp() {
   const app = new Hono();
