@@ -1,0 +1,30 @@
+{
+  "scripts": {
+    "dev": "vike dev",
+    "build": "vike build",
+    "preview": "vike build && vike preview",
+    "lint": "biome lint --write .",
+    "format": "biome format --write .",
+    "prod": "vike build && node ./dist/server/index.mjs"
+  },
+  "dependencies": {
+    "@universal-middleware/core": "^0.4.17",
+    "@vikejs/hono": "^0.2.0",
+    "hono": "^4.12.12",
+    "solid-js": "^1.9.12",
+    "telefunc": "^0.2.20",
+    "vike": "0.4.257",
+    "vike-solid": "^0.8.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.11",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^20.19.37",
+    "daisyui": "^5.5.19",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8",
+    "vite-plugin-solid": "^2.11.12"
+  },
+  "type": "module"
+}
