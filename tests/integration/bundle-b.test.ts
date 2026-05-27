@@ -5,7 +5,21 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { QueueEvents } from "bullmq";
 import { encode } from "@server/encoder";
 import { Status, ErrorVariant } from "@lib/utils/types";
-import { AudioCodec, Preset, VideoCodec } from "@lib/utils/ffmpeg";
+import {
+  AudioCodec,
+  FrameRate,
+  Preset,
+  Resolution,
+  VideoCodec,
+} from "@lib/utils/ffmpeg";
+import {
+  buildOutArgs,
+  getVisualQualityCrf,
+  markMatchingSocialPreset,
+  socialPresetSettings,
+  SocialPreset,
+  VisualQuality,
+} from "@lib/utils/social-presets";
 import {
   createTestWorkspace,
   generateTinyVideo,
@@ -32,6 +46,70 @@ async function loadVideoEncodeQueue() {
   loadedQueue = videoEncodeQueue;
   return videoEncodeQueue;
 }
+
+describe("social preset ffmpeg args", () => {
+  test("builds WhatsApp-compatible MP4 output args", () => {
+    const settings = socialPresetSettings(SocialPreset.WhatsApp);
+    const args = buildOutArgs(settings);
+
+    expect(args["c:v"]).toBe(VideoCodec.H264);
+    expect(args.preset).toBe(Preset.Slow);
+    expect(args.crf).toBe("28");
+    expect(args.movflags).toBe("+faststart");
+    expect(args["c:a"]).toBe(AudioCodec.AAC);
+    expect(args.vf).toContain("fps=min(30000/1001\\,source_fps)");
+    expect(args.vf).toContain("scale=w=-2:h='min(480\\,ih)':flags=lanczos");
+    expect(args.vf).toContain("out_transfer=bt709");
+    expect(args.vf).toContain("out_primaries=bt709");
+    expect(args.vf).toContain("out_color_matrix=bt709");
+    expect(args.vf).toContain("out_range=tv");
+    expect(args.vf).toContain("format=yuv420p");
+  });
+
+  test("builds inferred Instagram and Messenger defaults", () => {
+    const instagram = socialPresetSettings(SocialPreset.Instagram);
+    const messenger = socialPresetSettings(SocialPreset.Messenger);
+
+    expect(instagram.video.resolution).toBe(Resolution.FHD);
+    expect(instagram.video.crf).toBe(23);
+    expect(buildOutArgs(instagram)).toEqual(
+      expect.objectContaining({
+        "c:v": VideoCodec.H264,
+        "c:a": AudioCodec.AAC,
+        movflags: "+faststart",
+        preset: Preset.Slow,
+      }),
+    );
+
+    expect(messenger.video.resolution).toBe(Resolution.HD);
+    expect(messenger.video.crf).toBe(23);
+    expect(buildOutArgs(messenger)).toEqual(
+      expect.objectContaining({
+        "c:v": VideoCodec.H264,
+        "c:a": AudioCodec.AAC,
+        movflags: "+faststart",
+        preset: Preset.Slow,
+      }),
+    );
+  });
+
+  test("marks settings as custom when controlled fields differ", () => {
+    const settings = socialPresetSettings(SocialPreset.WhatsApp);
+    const changedSettings = markMatchingSocialPreset({
+      ...settings,
+      video: {
+        ...settings.video,
+        crf: getVisualQualityCrf({
+          quality: VisualQuality.Good,
+          codec: settings.video.videoCodec,
+        }),
+        framerate: FrameRate.Source,
+      },
+    });
+
+    expect(changedSettings.socialPreset).toBe(SocialPreset.Custom);
+  });
+});
 
 describe("production encoding path", () => {
   const runId = randomUUID();
@@ -75,9 +153,9 @@ describe("production encoding path", () => {
 
       const media = await probeMedia(downloadedPath);
       expect(Number(media.format.duration)).toBeGreaterThan(0);
-      expect(media.streams.some((stream) => stream.codec_type === "video")).toBe(
-        true,
-      );
+      expect(
+        media.streams.some((stream) => stream.codec_type === "video"),
+      ).toBe(true);
     },
     TEST_TIMEOUT,
   );
@@ -231,7 +309,7 @@ describe("production encoding path", () => {
         onEncodeVideo,
         onRequestDownload,
         onRequestUpload,
-      } = await import("../../pages/index/+Page.telefunc");
+      } = await import("../../pages/encode/+Page.telefunc");
       const videoEncodeQueue = await loadVideoEncodeQueue();
 
       await expect(
@@ -268,6 +346,7 @@ describe("production encoding path", () => {
 
       const encodeResponse = await onEncodeVideo({
         objectKey: upload.objectKey,
+        outputExtension: "mp4",
         settings: {
           outArgs: {
             "c:v": VideoCodec.H264,
@@ -281,6 +360,7 @@ describe("production encoding path", () => {
 
       expect(encodeResponse.status).toBe(Status.OK);
       expect(encodeResponse.jobId).toBeTruthy();
+      expect(encodeResponse.objectKey).toEndWith(".mp4");
       if (encodeResponse.objectKey) objectKeys.add(encodeResponse.objectKey);
 
       const queueEvents = new QueueEvents("video-encoding", {

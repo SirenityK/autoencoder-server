@@ -89,6 +89,7 @@ Server-side env is loaded via Vite's `import.meta.env`. Client env vars require 
   - `@lib/*` → `lib/*`
   - `@server/*` → `server/*`
   - `@components/*` → `components/*`
+- **DaisyUI is the primary UI layer. Prefer DaisyUI component, part, modifier, color, and size classes for interface elements such as navbars, menus, buttons, cards, stats, badges, alerts, forms, tables, tabs, footers, and layout shells. Use TailwindCSS utility classes mainly for responsive layout, spacing, sizing, and small adjustments that DaisyUI does not cover. Only build custom component styling when DaisyUI lacks an appropriate component or behavior. When in doubt, consult the official DaisyUI LLM reference at `https://daisyui.com/llms.txt`.**
 - **CSS classes**: use the `cn()` helper from `@lib/utils` to merge Tailwind classes. Biome enforces sorted classes with `cn`.
 - **Do NOT export anything from `server/worker.ts`** — it's a side-effect entry point for the worker process.
 - **Validation** uses valibot schemas defined in `@lib/utils/ffmpeg.ts` and `@lib/utils/env.ts`.

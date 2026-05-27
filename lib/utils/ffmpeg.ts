@@ -82,6 +82,7 @@ export enum Tune {
 export enum FrameRate {
   Source = "source_fps",
   NTSC = "ntsc",
+  NTSC_CAPPED = "min(30000/1001\\,source_fps)",
   NTSC_FILM = "ntsc_film",
   PAL = "pal",
   FLUID = "60",

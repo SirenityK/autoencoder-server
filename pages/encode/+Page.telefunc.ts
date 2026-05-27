@@ -1,17 +1,14 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { EncodeOptions } from "@lib/utils/ffmpeg";
-import {
-  ErrorVariant,
-  type ServerResponse,
-  Status,
-} from "@lib/utils/types";
+import { ErrorVariant, type ServerResponse, Status } from "@lib/utils/types";
 import { presignUrl } from "@server/env";
 import { videoEncodeQueue } from "@server/queue";
 
 interface EncodeVideoTelefuncArgs {
   objectKey: string;
-  settings?: Pick<EncodeOptions, "outArgs">;
+  outputExtension?: "mkv" | "mp4" | "webm";
+  settings?: Pick<EncodeOptions, "hwdecode" | "outArgs">;
 }
 
 export async function onRequestUpload({
@@ -101,6 +98,7 @@ export async function onCheckJobStatus({ jobId }: { jobId: string }) {
 
 export async function onEncodeVideo({
   objectKey,
+  outputExtension = "mkv",
   settings,
 }: EncodeVideoTelefuncArgs) {
   const file = path.parse(objectKey);
@@ -117,7 +115,7 @@ export async function onEncodeVideo({
     } satisfies ServerResponse;
   }
 
-  const outputPath = `encoded_${file.name}.mkv`;
+  const outputPath = `encoded_${file.name}.${outputExtension}`;
 
   const job = await videoEncodeQueue.add("encode", {
     objectKey,

@@ -45,7 +45,7 @@ export type ServerResponse = ErroredServerResponse | OkServerResponse;
 export interface QueueJobData {
   objectKey: string;
   outputPath: string;
-  settings?: Pick<EncodeOptions, "outArgs">;
+  settings?: Pick<EncodeOptions, "hwdecode" | "outArgs">;
 }
 
 export type LocalStorageData = v.InferInput<typeof localStorageSchema>;

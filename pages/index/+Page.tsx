@@ -1,933 +1,422 @@
-import { cn, pollUntilDone, uploadFileToPresignedUrl } from "@lib/utils";
 import {
-  AAC,
-  AudioCodec,
-  type AudioProfile,
-  AV1,
-  buildFfmpegFilterArg,
-  burnTextFilter,
-  ColorDepth,
-  Decoder,
-  EAC3,
-  FDKAAC,
-  FrameRate,
-  H264,
-  H265,
-  MP3,
-  Opus,
-  type Position,
-  Preset,
-  Resolution,
-  scaleFilter,
-  standardVideoFilters,
-  type Tune,
-  VideoCodec,
-} from "@lib/utils/ffmpeg";
-import {
-  ErrorVariant,
-  type LocalStorageData,
-  type ServerResponse,
-  Status,
-} from "@lib/utils/types";
-import { makePersisted } from "@solid-primitives/storage";
+  buildOutArgs,
+  getVisualQualityForCrf,
+  type EncodeSettings,
+  SOCIAL_PRESET_LABELS,
+  SOCIAL_PRESETS,
+  SocialPreset,
+  VISUAL_QUALITY_OPTIONS,
+} from "@lib/utils/social-presets";
+import BadgeCheck from "lucide-solid/icons/badge-check";
+import Clapperboard from "lucide-solid/icons/clapperboard";
+import Cpu from "lucide-solid/icons/cpu";
+import Gauge from "lucide-solid/icons/gauge";
+import Image from "lucide-solid/icons/image";
+import MessageCircle from "lucide-solid/icons/message-circle";
+import MonitorPlay from "lucide-solid/icons/monitor-play";
 import MoveRight from "lucide-solid/icons/move-right";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  type JSX,
-  Match,
-  Show,
-  Switch,
-} from "solid-js";
-import { createStore } from "solid-js/store";
-import { objectEntries, objectValues } from "ts-extras";
-import type { Entries } from "type-fest";
-import { ClientOnly } from "vike-solid/ClientOnly";
-import {
-  onCheckJobStatus,
-  onEncodeVideo,
-  onRequestDownload,
-  onRequestUpload,
-} from "./+Page.telefunc";
+import Music2 from "lucide-solid/icons/music-2";
+import RadioTower from "lucide-solid/icons/radio-tower";
+import SlidersHorizontal from "lucide-solid/icons/sliders-horizontal";
+import Sparkles from "lucide-solid/icons/sparkles";
+import { createMemo, createSignal, For, onCleanup, onMount } from "solid-js";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface EncodeSettings {
-  video: {
-    videoCodec: VideoCodec;
-    resolution: Resolution;
-    preset: Preset;
-    tune: Tune | "";
-    crf: number;
-    framerate: FrameRate;
-    colorDepth: ColorDepth;
-    defaultDistributionArgs: boolean;
-    filters: {
-      drawtext: string;
-      textPosition: Position;
-    };
-  };
-  audio: {
-    audioCodec: AudioCodec;
-    audioProfile: AudioProfile | "";
-    audioBitrate: number;
-  };
-
-  // Hardware
-  decoder: Decoder | "";
-}
-
-// ─── Data Maps ────────────────────────────────────────────────────────────────
-
-const VIDEO_DESCRIPTORS = {
-  [VideoCodec.H264]: H264,
-  [VideoCodec.H265]: H265,
-  [VideoCodec.AV1]: AV1,
-} as const;
-
-const AUDIO_DESCRIPTORS = {
-  [AudioCodec.Opus]: Opus,
-  [AudioCodec.FDKAAC]: FDKAAC,
-  [AudioCodec.AAC]: AAC,
-  [AudioCodec.EAC3]: EAC3,
-  [AudioCodec.MP3]: MP3,
-} as const;
-
-const VIDEO_CODEC_LABELS: Record<VideoCodec, string> = {
-  [VideoCodec.H264]: "H.264 (libx264)",
-  [VideoCodec.H265]: "H.265 (libx265)",
-  [VideoCodec.AV1]: "AV1 (libsvtav1)",
-};
-
-const AUDIO_CODEC_LABELS: Record<AudioCodec, string> = {
-  [AudioCodec.Opus]: "Opus (libopus)",
-  [AudioCodec.AAC]: "AAC",
-  [AudioCodec.FDKAAC]: "AAC (Fraunhofer)",
-  [AudioCodec.EAC3]: "E-AC3 (Dolby Digital+)",
-  [AudioCodec.MP3]: "MP3 (libmp3lame)",
-};
-
-const FRAMERATE_LABELS: Record<FrameRate, string> = {
-  [FrameRate.Source]: "Source",
-  [FrameRate.NTSC]: "NTSC (29.97)",
-  [FrameRate.NTSC_FILM]: "NTSC Film (23.976)",
-  [FrameRate.PAL]: "PAL (25)",
-  [FrameRate.FLUID]: "Fluid (60)",
-  [FrameRate.MINIMAL]: "Minimal (6)",
-};
-
-// ─── Option arrays (Base) ─────────────────────────────────────────────────────
-
-const AUDIO_CODECS = (
-  Object.entries(AUDIO_CODEC_LABELS) as Entries<typeof AUDIO_CODEC_LABELS>
-).map(([value, label]) => ({ value, label }));
-
-const COLOR_DEPTHS = [
-  { value: ColorDepth.BIT_8, label: "8-bit (yuv420p)" },
-  { value: ColorDepth.BIT_10, label: "10-bit (yuv420p10le)" },
-  { value: ColorDepth.BIT_12, label: "12-bit (yuv420p12le)" },
-];
-
-const DECODERS = [
-  { value: "", label: "Software (CPU)" },
-  { value: Decoder.CUDA, label: "CUDA (NVIDIA)" },
-  { value: Decoder.VAAPI, label: "VAAPI (Intel/AMD)" },
+const CODEC_CARDS = [
+  {
+    name: "H.264",
+    label: "Universal",
+    description:
+      "Reliable playback for everyday delivery, fast reviews, and broad compatibility.",
+    icon: MonitorPlay,
+    badge: "safe pick",
+  },
+  {
+    name: "H.265",
+    label: "Compact",
+    description:
+      "Sharper files at smaller sizes when quality and storage both matter.",
+    icon: Cpu,
+    badge: "efficient",
+  },
+  {
+    name: "AV1",
+    label: "Modern",
+    description:
+      "A forward-looking option for high compression and clean web distribution.",
+    icon: Sparkles,
+    badge: "next-gen",
+  },
+  {
+    name: "AAC / Opus",
+    label: "Audio",
+    description:
+      "Tuned audio paths for voice, music, and compact social-ready exports.",
+    icon: Music2,
+    badge: "balanced",
+  },
 ] as const;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const SOCIAL_PRESET_ORDER = [
+  SocialPreset.WhatsApp,
+  SocialPreset.Instagram,
+  SocialPreset.Messenger,
+] as const;
 
-function buildOutArgs(s: EncodeSettings): Record<string, string> {
-  const args: Record<string, string> = {
-    "c:v": s.video.videoCodec,
-    preset: String(s.video.preset),
-    crf: String(s.video.crf),
-  };
+const SOCIAL_PRESET_DETAILS = {
+  [SocialPreset.WhatsApp]: {
+    summary:
+      "Compact everyday sharing with capped frame rate and smaller files.",
+    icon: MessageCircle,
+    accent: "badge-success",
+  },
+  [SocialPreset.Instagram]: {
+    summary: "Full HD social exports tuned for cleaner reels and feed posts.",
+    icon: Image,
+    accent: "badge-secondary",
+  },
+  [SocialPreset.Messenger]: {
+    summary:
+      "Balanced HD clips for chat threads, previews, and quick handoffs.",
+    icon: RadioTower,
+    accent: "badge-info",
+  },
+} as const;
 
-  if (s.video.tune !== "") {
-    args.tune = String(s.video.tune);
-  }
-
-  // Video filters
-  const vfParts = [];
-  // Framerate first since it'll avoid processing dropped frames in later filters
-  if (s.video.framerate !== FrameRate.Source) {
-    vfParts.push(
-      buildFfmpegFilterArg({
-        fps: s.video.framerate,
-      }),
-    );
-  }
-  // Resolution first since scaling should be done before other filters for best performance
-  if (s.video.resolution !== Resolution.SOURCE) {
-    vfParts.push(scaleFilter({ width: s.video.resolution }));
-  }
-  if (s.video.defaultDistributionArgs)
-    vfParts.push(standardVideoFilters({ colorDepth: s.video.colorDepth }));
-
-  if (s.video.filters.drawtext.trim()) {
-    vfParts.push(
-      burnTextFilter({
-        text: s.video.filters.drawtext,
-        position: s.video.filters.textPosition,
-        fontSize: 24,
-      }),
-    );
-  }
-
-  if (vfParts.length > 0) args.vf = vfParts.join(",");
-
-  // Audio
-  args["c:a"] = s.audio.audioCodec;
-  args["b:a"] = `${s.audio.audioBitrate}k`;
-  if (s.audio.audioProfile) args["profile:a"] = s.audio.audioProfile;
-
-  return args;
+function formatArgs(settings: EncodeSettings): string {
+  return Object.entries(buildOutArgs(settings))
+    .map(([key, value]) => `-${key} ${value}`)
+    .join(" ");
 }
 
-// ─── Default settings ─────────────────────────────────────────────────────────
-
-const DEFAULT_H264_SETTINGS: EncodeSettings = {
-  video: {
-    videoCodec: VideoCodec.H264,
-    resolution: Resolution.SOURCE,
-    preset: Preset.Medium,
-    tune: "",
-    framerate: FrameRate.Source,
-    crf: 23,
-    colorDepth: ColorDepth.BIT_8,
-    defaultDistributionArgs: true,
-    filters: {
-      drawtext: "",
-      textPosition: "topRight",
-    },
-  },
-  audio: {
-    audioCodec: AudioCodec.AAC,
-    audioProfile: "",
-    audioBitrate: Math.round(Opus.transparentBitrateKbpsPerCh * 2),
-  },
-  decoder: "",
-};
-
-const DEFAULT_H265_SETTINGS: EncodeSettings = {
-  video: {
-    videoCodec: VideoCodec.H265,
-    resolution: Resolution.SOURCE,
-    preset: Preset.Medium,
-    tune: "",
-    framerate: FrameRate.Source,
-    crf: 28,
-    colorDepth: ColorDepth.BIT_8,
-    defaultDistributionArgs: true,
-    filters: {
-      drawtext: "",
-      textPosition: "topRight",
-    },
-  },
-  audio: {
-    audioCodec: AudioCodec.AAC,
-    audioProfile: "",
-    audioBitrate: Math.round(Opus.transparentBitrateKbpsPerCh * 2),
-  },
-  decoder: "",
-};
-
-const DEFAULT_AV1_SETTINGS: EncodeSettings = {
-  video: {
-    videoCodec: VideoCodec.AV1,
-    resolution: Resolution.SOURCE,
-    preset: Preset.EIGHT,
-    tune: "",
-    framerate: FrameRate.Source,
-    crf: 35,
-    colorDepth: ColorDepth.BIT_8,
-    defaultDistributionArgs: true,
-    filters: {
-      drawtext: "",
-      textPosition: "topRight",
-    },
-  },
-  audio: {
-    audioCodec: AudioCodec.AAC,
-    audioProfile: "",
-    audioBitrate: Math.round(Opus.transparentBitrateKbpsPerCh * 2),
-  },
-  decoder: "",
-};
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function FieldLabel(props: {
-  children: JSX.Element;
-  prefix?: string;
-  suffix?: string;
-  hint?: string | number;
-}) {
-  return (
-    <div class="mb-1 flex justify-between">
-      <h3 class="font-semibold text-info text-xs uppercase tracking-widest">
-        {props.children}
-      </h3>
-      <Show when={props.hint}>
-        <span class="self-end text-base-content/50 text-xs">
-          {props.prefix}
-          {props.hint}
-          {props.suffix}
-        </span>
-      </Show>
-    </div>
-  );
+function formatResolution(settings: EncodeSettings): string {
+  return settings.video.resolution === "source"
+    ? "Source"
+    : `${settings.video.resolution}p`;
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+function visualQualityLabel(settings: EncodeSettings): string {
+  const quality = getVisualQualityForCrf({
+    crf: settings.video.crf,
+    codec: settings.video.videoCodec,
+  });
+  const option = VISUAL_QUALITY_OPTIONS.find((item) => item.value === quality);
+  return option?.label ?? `CRF ${settings.video.crf}`;
+}
+
+function presetSettingsLabels(settings: EncodeSettings) {
+  return [
+    { label: formatResolution(settings), enabled: true },
+    { label: visualQualityLabel(settings), enabled: true },
+    { label: settings.video.videoCodec, enabled: true },
+    { label: `${settings.audio.audioBitrate} kbps audio`, enabled: true },
+    { label: settings.outputExtension.toUpperCase(), enabled: true },
+  ];
+}
+
+function randomPresetIndex(current: number): number {
+  if (SOCIAL_PRESET_ORDER.length < 2) return current;
+
+  const next = Math.floor(Math.random() * SOCIAL_PRESET_ORDER.length);
+  return next === current ? (next + 1) % SOCIAL_PRESET_ORDER.length : next;
+}
 
 export default function Page() {
-  const [settings, setSettings] = createStore<EncodeSettings>({
-    ...DEFAULT_H264_SETTINGS,
-  });
-  const [downloadableKey, setDownloadableKey] = createSignal<string>();
-  const [file, setFile] = createSignal<File | null>(null);
-  const [canSubmit, setCanSubmit] = createSignal(false);
-  const [status, setStatus] = createSignal<ServerResponse>({
-    status: Status.CLIENT_IDLE,
-    message: "",
-  });
-  const [encodingHistory, setEncodingHistory] = makePersisted(
-    createStore<LocalStorageData>(
-      { fileHistory: [] },
-      {
-        name: "local-storage-data",
-      },
-    ),
+  const [presetIndex, setPresetIndex] = createSignal(0);
+  const activePreset = createMemo(() => SOCIAL_PRESET_ORDER[presetIndex()]);
+  const activeSettings = createMemo(() => SOCIAL_PRESETS[activePreset()]);
+  const activePresetLabel = createMemo(
+    () => SOCIAL_PRESET_LABELS[activePreset()],
   );
 
-  // Dynamically resolved descriptor objects
-  const currentVideoDescriptor = createMemo(
-    () => VIDEO_DESCRIPTORS[settings.video.videoCodec],
-  );
-  const currentAudioDescriptor = createMemo(
-    () => AUDIO_DESCRIPTORS[settings.audio.audioCodec],
-  );
+  onMount(() => {
+    const intervalId = window.setInterval(() => {
+      setPresetIndex((current) => randomPresetIndex(current));
+    }, 3200);
 
-  // Dynamic Options
-  // hardcoded switch on some since some preset range like svtav1 are already an array and some like libx264 are an object
-  const availableVideoPresets = createMemo(() => {
-    switch (settings.video.videoCodec) {
-      case VideoCodec.AV1:
-        return AV1.presets;
-      default:
-        return objectValues(currentVideoDescriptor().presets);
-    }
+    onCleanup(() => window.clearInterval(intervalId));
   });
-
-  const availableVideoTunes = createMemo(() => {
-    switch (settings.video.videoCodec) {
-      case VideoCodec.AV1:
-        return AV1.tunes;
-      default:
-        return objectValues(currentVideoDescriptor().tunes);
-    }
-  });
-
-  const availableAudioProfiles = createMemo(() => {
-    return objectValues(currentAudioDescriptor().profiles);
-  });
-
-  // Validation Signals
-  const crfValid = () =>
-    settings.video.crf >= currentVideoDescriptor().crfMin &&
-    settings.video.crf <= currentVideoDescriptor().crfMax;
-  const bitrateValid = () =>
-    settings.audio.audioBitrate >= 8 && settings.audio.audioBitrate <= 640;
-
-  createEffect(() => {
-    const valid =
-      file() !== null &&
-      crfValid() &&
-      bitrateValid() &&
-      status().status === Status.CLIENT_IDLE;
-    setCanSubmit(valid);
-  });
-
-  async function handleSubmit(e: SubmitEvent) {
-    e.preventDefault();
-    setDownloadableKey();
-    const f = file();
-    if (!canSubmit() || !f) return;
-
-    setStatus({ status: Status.CLIENT_IDLE, message: "" });
-    try {
-      const outArgs = buildOutArgs(settings);
-      const uploadLink = await onRequestUpload({
-        filename: f.name,
-        type: f.type,
-      });
-
-      setStatus({ status: Status.CLIENT_UPLOADING });
-      await uploadFileToPresignedUrl(f, uploadLink.presignedUrl);
-      setStatus({ status: Status.CLIENT_PROCESSING });
-      const result = await onEncodeVideo({
-        objectKey: uploadLink.objectKey,
-        settings: {
-          outArgs,
-          ...(settings.decoder ? { hwdecode: settings.decoder } : {}),
-        },
-      });
-
-      switch (result.status) {
-        case Status.OK: {
-          setStatus({
-            status: Status.CLIENT_PROCESSING,
-            jobId: result.jobId,
-          });
-          const backgroundJob = await pollUntilDone(
-            async () => {
-              const response = await onCheckJobStatus({ jobId: result.jobId });
-              switch (response.status) {
-                case Status.ERRORED:
-                  setStatus({
-                    status: response.status,
-                    errorVariant: response.errorVariant,
-                    message: response.message,
-                  });
-                  break;
-                default:
-                  setStatus({
-                    status: response.status,
-                    message: response.message,
-                  });
-              }
-              return response;
-            },
-            (r) => r.progress === 100 || r.status === Status.ERRORED,
-          );
-
-          if (backgroundJob.status === Status.OK) {
-            const url = await onRequestDownload({
-              objectKey: result.objectKey,
-            });
-            setStatus({ status: Status.CLIENT_IDLE });
-            setDownloadableKey(url.presignedUrl);
-            setEncodingHistory(
-              "fileHistory",
-              encodingHistory.fileHistory.length,
-              {
-                filename: f.name,
-                type: f.type,
-                uploadedAt: Date.now(),
-                objectKey: url.presignedUrl,
-                expiresAt: url.expiresAt,
-              },
-            );
-          }
-          break;
-        }
-        case Status.ERRORED:
-          setStatus({
-            status: result.status,
-            errorVariant: result.errorVariant,
-            message: result.message,
-          });
-          break;
-      }
-    } catch (err) {
-      setStatus({
-        status: Status.ERRORED,
-        errorVariant: ErrorVariant.UNKNOWN,
-        message: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  }
-
-  const argsPreview = () => {
-    const args = buildOutArgs(settings);
-    return Object.entries(args)
-      .map(([k, v]) => `-${k} ${v}`)
-      .join(" ");
-  };
 
   return (
-    <div class="mx-auto max-w-3xl space-y-8">
-      {/* Header */}
-      <div>
-        <div class="mb-1 flex items-center gap-3">
-          <div class="size-2 animate-pulse rounded-full bg-primary" />
-          <span class="text-xs text-zinc-500 uppercase tracking-widest">
-            ffmpeg encoder
-          </span>
-        </div>
-        <h1 class="font-semibold text-3xl">Video Encode</h1>
-        <p class="mt-1 text-sm text-zinc-500">
-          Configure and dispatch an ffmpeg encoding job to the worker queue.
-        </p>
-      </div>
-
-      <form onsubmit={handleSubmit} class="space-y-5">
-        {/* File input */}
-        <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Input File</legend>
-          <input
-            type="file"
-            name="file"
-            id="file"
-            class="file-input file-input-primary"
-            onchange={(e) => {
-              const f = e.currentTarget.files?.item(0) ?? null;
-              setFile(f);
-              setStatus({ status: Status.CLIENT_IDLE, message: "" });
-            }}
-          />
-        </fieldset>
-
-        {/* Video settings */}
-        <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Video</legend>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <FieldLabel>Codec</FieldLabel>
-              <select
-                class="select"
-                name="codec"
-                value={settings.video.videoCodec}
-                onchange={(e) => {
-                  const codec = e.currentTarget.value as VideoCodec;
-                  // Update dependent defaults
-                  switch (codec) {
-                    case VideoCodec.H264:
-                      setSettings(DEFAULT_H264_SETTINGS);
-                      break;
-                    case VideoCodec.H265:
-                      setSettings(DEFAULT_H265_SETTINGS);
-                      break;
-                    case VideoCodec.AV1:
-                      setSettings(DEFAULT_AV1_SETTINGS);
-                      break;
-                  }
-                }}
-              >
-                {objectEntries(VIDEO_CODEC_LABELS).map(([key, label]) => (
-                  <option
-                    selected={key === settings.video.videoCodec}
-                    value={key}
-                  >
-                    {label}
-                  </option>
-                ))}
-              </select>
+    <main class="bg-base-100">
+      <section class="hero min-h-[calc(100vh-4rem)] bg-base-200 px-4 py-12">
+        <div class="hero-content mx-auto grid w-full max-w-7xl grid-cols-1 gap-10 p-0 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.82fr)]">
+          <div class="max-w-3xl">
+            <div class="badge badge-primary badge-lg gap-2">
+              <span class="size-2 animate-pulse rounded-full bg-primary-content" />
+              Social presets are live
             </div>
 
-            <div>
-              <FieldLabel>Preset</FieldLabel>
-              <select
-                class="select"
-                disabled={availableVideoPresets().length === 0}
-                value={settings.video.preset}
-                onchange={(e) => {
-                  const val = e.currentTarget.value as Preset;
-                  setSettings("video", "preset", val);
-                }}
-              >
-                <Show
-                  when={availableVideoPresets().length > 0}
-                  fallback={<option>— no presets available —</option>}
-                >
-                  <For each={availableVideoPresets()}>
-                    {(preset) => (
-                      <option
-                        selected={preset === settings.video.preset}
-                        value={preset}
-                      >
-                        {preset}
-                      </option>
-                    )}
-                  </For>
-                </Show>
-              </select>
+            <h1 class="mt-6 text-balance font-black text-5xl leading-none tracking-tight sm:text-6xl lg:text-7xl">
+              Turn heavy videos into clean, shareable files.
+            </h1>
+            <p class="mt-6 max-w-2xl text-base-content/70 text-lg leading-8">
+              Optiflow gives creators and teams a focused encoding surface: pick
+              a destination preset, adjust quality when needed, and export
+              without wrestling with command-line rituals.
+            </p>
+
+            <div class="mt-8 flex flex-wrap gap-3">
+              <a href="/encode" class="btn btn-primary">
+                Open encoder
+                <MoveRight class="size-4" />
+              </a>
+              <a href="#presets" class="btn btn-outline">
+                See presets
+              </a>
             </div>
 
-            <div>
-              <FieldLabel hint="optional">Tune</FieldLabel>
-              <select
-                class="select"
-                value={settings.video.tune.toString()}
-                disabled={availableVideoTunes().length === 0}
-                onchange={(e) => {
-                  const tune = e.currentTarget.value as Tune;
-                  setSettings("video", "tune", tune);
-                }}
-              >
-                <option value="">— none —</option>
-                <For each={availableVideoTunes()}>
-                  {(Tune) => <option value={Tune}>{Tune}</option>}
-                </For>
-              </select>
-            </div>
-
-            <div>
-              <FieldLabel prefix="value: " hint={settings.video.crf}>
-                CRF{" "}
-                <span class="text-base-content/30">
-                  ({currentVideoDescriptor().crfMin}-
-                  {currentVideoDescriptor().crfMax})
-                </span>
-              </FieldLabel>
-              <input
-                type="number"
-                class={cn("input", !crfValid() && "input-error")}
-                min={currentVideoDescriptor().crfMin}
-                max={currentVideoDescriptor().crfMax}
-                value={settings.video.crf}
-                onchange={(e) =>
-                  setSettings("video", "crf", Number(e.currentTarget.value))
-                }
-              />
-              <input
-                type="range"
-                class="range range-primary mt-2"
-                min={currentVideoDescriptor().crfMin}
-                max={currentVideoDescriptor().crfMax}
-                value={settings.video.crf}
-                oninput={(e) =>
-                  setSettings("video", "crf", Number(e.currentTarget.value))
-                }
-              />
+            <div class="stats stats-vertical sm:stats-horizontal mt-10 w-full shadow">
+              <div class="stat">
+                <div class="stat-figure text-primary">
+                  <Clapperboard class="size-8" />
+                </div>
+                <div class="stat-title">Presets</div>
+                <div class="stat-value text-2xl">3</div>
+                <div class="stat-desc">WhatsApp, Instagram, Messenger</div>
+              </div>
+              <div class="stat">
+                <div class="stat-figure text-secondary">
+                  <SlidersHorizontal class="size-8" />
+                </div>
+                <div class="stat-title">Controls</div>
+                <div class="stat-value text-2xl">Precise</div>
+                <div class="stat-desc">quality, size, speed</div>
+              </div>
             </div>
           </div>
 
-          <div class="mt-4 flex flex-wrap gap-6">
-            <div>
-              <FieldLabel>Resolution</FieldLabel>
-              <select
-                name="resolution"
-                id="resolution"
-                class="select"
-                onchange={(e) => {
-                  const resolution = e.currentTarget.value as Resolution;
-                  setSettings("video", "resolution", resolution);
-                }}
-              >
-                {objectValues(Resolution)
-                  .toReversed()
-                  .map((r) => (
-                    <option
-                      selected={r === settings.video.resolution}
-                      value={r}
+          <div class="w-full">
+            <div class="mockup-window border border-base-300 bg-base-300 shadow-2xl">
+              <div class="bg-base-100 p-5">
+                <div class="card bg-neutral text-neutral-content">
+                  <div class="card-body gap-5">
+                    <div class="flex items-center justify-between gap-4">
+                      <div>
+                        <p class="text-neutral-content/60 text-xs uppercase tracking-widest">
+                          live preset
+                        </p>
+                        <h2 class="card-title text-2xl">
+                          {activePresetLabel()} export
+                        </h2>
+                      </div>
+                      <BadgeCheck class="size-6 text-success" />
+                    </div>
+
+                    <div
+                      class="radial-progress mx-auto text-success"
+                      style={{ "--value": 71 }}
                     >
-                      {r === Resolution.SOURCE ? "Source" : `${r}p`}
-                    </option>
-                  ))}
-              </select>
+                      <span class="font-black text-2xl">71%</span>
+                    </div>
+
+                    <progress
+                      class="progress progress-success"
+                      max="100"
+                      value="71"
+                    />
+
+                    <div class="mockup-code bg-base-300 text-base-content">
+                      <pre data-prefix="$">
+                        <code>
+                          ffmpeg $IN_ARGS {formatArgs(activeSettings())}
+                        </code>
+                      </pre>
+                      <pre data-prefix=">" class="text-success">
+                        <code>
+                          {activePresetLabel()} export is almost ready
+                        </code>
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="alert alert-info mt-4">
+                  <Gauge class="size-5" />
+                  <span>
+                    Presets set the baseline; advanced controls stay available.
+                  </span>
+                </div>
+              </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="presets"
+        class="flex min-h-screen items-center bg-base-100 px-4 py-16"
+      >
+        <div class="mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-10 lg:grid-cols-[0.82fr_1fr]">
+          <div>
+            <div class="badge badge-secondary badge-lg">Preset library</div>
+            <h2 class="mt-5 max-w-2xl text-balance font-black text-4xl leading-tight sm:text-5xl">
+              Pick the destination, then let Optiflow shape the export.
+            </h2>
+            <p class="mt-5 max-w-xl text-base-content/70 leading-7">
+              The encoder now includes real social presets that select sensible
+              resolution, quality, frame-rate, audio, and container defaults
+              before you touch advanced settings.
+            </p>
+          </div>
+
+          <div class="carousel carousel-center w-full gap-4 rounded-box bg-base-200 p-4 shadow-xl">
+            <For each={SOCIAL_PRESET_ORDER}>
+              {(preset) => {
+                const Icon = SOCIAL_PRESET_DETAILS[preset].icon;
+                const settings = SOCIAL_PRESETS[preset];
+                return (
+                  <div class="carousel-item w-80">
+                    <div class="card w-full bg-base-100 shadow">
+                      <div class="card-body">
+                        <div class="flex items-center justify-between gap-3">
+                          <div class="avatar placeholder">
+                            <div class="grid w-16 place-items-center rounded-full bg-primary text-primary-content">
+                              <Icon class="size-8" />
+                            </div>
+                          </div>
+                          <div
+                            class={`badge ${SOCIAL_PRESET_DETAILS[preset].accent}`}
+                          >
+                            {settings.outputExtension.toUpperCase()}
+                          </div>
+                        </div>
+                        <h3 class="card-title mt-3">
+                          {SOCIAL_PRESET_LABELS[preset]}
+                        </h3>
+                        <p class="text-base-content/70 text-sm leading-6">
+                          {SOCIAL_PRESET_DETAILS[preset].summary}
+                        </p>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                          <For
+                            each={presetSettingsLabels(settings).slice(0, 3)}
+                          >
+                            {(setting) => (
+                              <div class="badge badge-outline">
+                                {setting.label}
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                        <div class="card-actions mt-4">
+                          <a href="/encode" class="btn btn-primary btn-sm">
+                            Use preset
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+      </section>
+
+      <section class="flex min-h-screen items-center bg-base-200 px-4 py-16">
+        <div class="mx-auto w-full max-w-7xl">
+          <div class="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <FieldLabel>Color Depth</FieldLabel>
+              <div class="badge badge-accent badge-lg">Featured codecs</div>
+              <h2 class="mt-5 text-balance font-black text-4xl leading-tight sm:text-5xl">
+                Choose the right engine for the file you need.
+              </h2>
+            </div>
+            <a href="/encode" class="btn btn-primary">
+              Try a codec
+              <MoveRight class="size-4" />
+            </a>
+          </div>
+
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <For each={CODEC_CARDS}>
+              {(codec) => {
+                const Icon = codec.icon;
+                return (
+                  <div class="card bg-base-100 shadow">
+                    <div class="card-body">
+                      <div class="flex items-center justify-between gap-3">
+                        <div class="avatar placeholder">
+                          <div class="grid w-12 place-items-center rounded-full bg-primary text-primary-content">
+                            <Icon class="size-6" />
+                          </div>
+                        </div>
+                        <div class="badge badge-outline">{codec.badge}</div>
+                      </div>
+                      <h3 class="card-title mt-4">
+                        {codec.name}
+                        <span class="badge badge-secondary">{codec.label}</span>
+                      </h3>
+                      <p class="text-base-content/70 text-sm leading-6">
+                        {codec.description}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+      </section>
+
+      <section class="flex min-h-screen items-center bg-base-100 px-4 py-16">
+        <div class="mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-10 lg:grid-cols-[0.85fr_1fr]">
+          <div>
+            <div class="badge badge-primary badge-lg">
+              Live settings preview
+            </div>
+            <h2 class="mt-5 max-w-2xl text-balance font-black text-4xl leading-tight sm:text-5xl">
+              Technical when you want it. Friendly when you do not.
+            </h2>
+            <p class="mt-5 max-w-xl text-base-content/70 leading-7">
+              The preset strip explains what is changing without forcing
+              everyone to read ffmpeg flags. The command remains there for
+              people who want the exact output.
+            </p>
+          </div>
+
+          <div class="mockup-window border border-base-300 bg-base-300 shadow-2xl">
+            <div class="space-y-5 bg-base-100 p-5">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p class="text-base-content/50 text-xs uppercase tracking-widest">
+                    generated args preview
+                  </p>
+                  <h3 class="font-bold text-2xl">
+                    {activePresetLabel()} preset
+                  </h3>
+                </div>
+                <div class="badge badge-success gap-2">
+                  <span class="loading loading-ring loading-xs" />
+                  rotating presets
+                </div>
+              </div>
+
               <div class="flex flex-wrap gap-2">
-                <For each={COLOR_DEPTHS}>
-                  {(cd) => (
+                <For each={presetSettingsLabels(activeSettings())}>
+                  {(setting) => (
                     <button
                       type="button"
-                      onclick={() =>
-                        setSettings("video", "colorDepth", cd.value)
+                      class={
+                        setting.enabled
+                          ? "btn btn-primary btn-sm"
+                          : "btn btn-outline btn-sm"
                       }
-                      aria-pressed={settings.video.colorDepth === cd.value}
-                      class={cn(
-                        "btn",
-                        settings.video.colorDepth === cd.value
-                          ? "btn-info"
-                          : "",
-                      )}
                     >
-                      {cd.label}
+                      {setting.label}
                     </button>
                   )}
                 </For>
               </div>
-            </div>
-            <div class="grid max-md:gap-2 md:ml-auto">
-              <FieldLabel>Optimize</FieldLabel>
-              <input
-                type="checkbox"
-                class="toggle toggle-info md:ml-auto"
-                checked={settings.video.defaultDistributionArgs}
-                onchange={(e) =>
-                  setSettings(
-                    "video",
-                    "defaultDistributionArgs",
-                    e.currentTarget.checked,
-                  )
-                }
-              />
-            </div>
-            <div>
-              <FieldLabel>Frame Rate</FieldLabel>
-              <select
-                name="framerate"
-                id="framerate"
-                class="select"
-                onchange={(e) => {
-                  const framerate = e.currentTarget.value as FrameRate;
-                  setSettings("video", "framerate", framerate);
-                }}
-              >
-                {objectValues(FrameRate).map((value) => (
-                  <option
-                    selected={value === settings.video.framerate}
-                    value={value}
-                  >
-                    {FRAMERATE_LABELS[value]}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </fieldset>
 
-        {/* Audio settings */}
-        <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Audio</legend>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
-              <FieldLabel>Codec</FieldLabel>
-              <select
-                class="select"
-                value={settings.audio.audioCodec}
-                onchange={(e) => {
-                  const codec = e.currentTarget.value as AudioCodec;
-                  setSettings("audio", "audioCodec", codec);
-                }}
-              >
-                {AUDIO_CODECS.map((codec) => (
-                  <option
-                    selected={codec.value === settings.audio.audioCodec}
-                    value={codec.value}
-                  >
-                    {codec.label}
-                  </option>
-                ))}
-              </select>
+              <div class="mockup-code bg-neutral text-neutral-content">
+                <pre data-prefix="$">
+                  <code>ffmpeg $IN_ARGS {formatArgs(activeSettings())}</code>
+                </pre>
+              </div>
             </div>
-
-            <div>
-              <FieldLabel hint="optional">Profile</FieldLabel>
-              <select
-                class={cn(
-                  "select",
-                  availableAudioProfiles().length === 0 && "btn-disabled",
-                )}
-                value={settings.audio.audioProfile}
-                disabled={availableAudioProfiles().length === 0}
-                onchange={(e) => {
-                  const profile = e.currentTarget.value as ReturnType<
-                    typeof availableAudioProfiles
-                  >[number];
-                  setSettings("audio", "audioProfile", profile);
-                }}
-              >
-                <option value="">— none —</option>
-                <For each={availableAudioProfiles()}>
-                  {(profile) => <option value={profile}>{profile}</option>}
-                </For>
-              </select>
-            </div>
-
-            <div>
-              <FieldLabel hint={settings.audio.audioBitrate} suffix=" kbps">
-                Bitrate
-              </FieldLabel>
-              <input
-                type="number"
-                class={`input ${bitrateValid() ? "" : "invalid"}`}
-                min={8}
-                max={768}
-                step={8}
-                value={settings.audio.audioBitrate}
-                onchange={(e) =>
-                  setSettings(
-                    "audio",
-                    "audioBitrate",
-                    Number(e.currentTarget.value),
-                  )
-                }
-              />
-              <input
-                type="range"
-                class="range range-secondary mt-2"
-                min={8}
-                max={768}
-                step={8}
-                value={settings.audio.audioBitrate}
-                oninput={(e) =>
-                  setSettings(
-                    "audio",
-                    "audioBitrate",
-                    Number(e.currentTarget.value),
-                  )
-                }
-              />
-            </div>
-          </div>
-        </fieldset>
-
-        {/* Hardware & filters */}
-        <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Hardware & Filters</legend>
-          <div class="flex flex-wrap items-end gap-4 *:flex-1">
-            <div>
-              <FieldLabel>HW Decoder</FieldLabel>
-              <select
-                class="select"
-                value={settings.decoder}
-                onchange={(e) => {
-                  const val = e.currentTarget
-                    .value as EncodeSettings["decoder"];
-                  setSettings("decoder", val);
-                }}
-              >
-                <For each={DECODERS}>
-                  {(d) => <option value={d.value}>{d.label}</option>}
-                </For>
-              </select>
-            </div>
-
-            <div>
-              <FieldLabel hint="optional">Drawtext overlay</FieldLabel>
-              <input
-                type="text"
-                class="input"
-                placeholder="e.g. Test encode v2"
-                value={settings.video.filters.drawtext}
-                oninput={(e) =>
-                  setSettings(
-                    "video",
-                    "filters",
-                    "drawtext",
-                    e.currentTarget.value,
-                  )
-                }
-              />
-            </div>
-          </div>
-        </fieldset>
-
-        {/* Args preview */}
-        <div>
-          <div class="mb-2 text-base-content/80 text-xs uppercase tracking-widest">
-            Generated args preview
-          </div>
-          <div class="box-border bg-base-300">
-            <p class="break-all p-4">
-              <span class="text-secondary">ffmpeg</span>{" "}
-              <span class="text-accent">$IN_ARGS</span>{" "}
-              <span class="text-base-content/60">{argsPreview()}</span>{" "}
-              <span class="text-accent">$OUTPUT</span>
-            </p>
           </div>
         </div>
-
-        {/* Submit & status */}
-        <div class="flex flex-wrap items-center gap-4">
-          <Show when={downloadableKey()}>
-            <a
-              href={downloadableKey()}
-              rel="noopener noreferrer"
-              target="_blank"
-              class="btn btn-secondary"
-            >
-              Download
-            </a>
-          </Show>
-          <Show
-            when={status().status !== Status.ERRORED}
-            fallback={
-              <p
-                class="max-w-md truncate text-error text-sm"
-                title={status().message}
-              >
-                {status().message}
-              </p>
-            }
-          >
-            <button
-              type="submit"
-              class="btn btn-primary"
-              disabled={!canSubmit()}
-            >
-              <Switch fallback={import.meta.env.DEV && Status[status().status]}>
-                <Match when={status().status === Status.CLIENT_IDLE}>
-                  Enqueue Job
-                  <MoveRight class="size-4" />
-                </Match>
-                <Match when={status().status === Status.CLIENT_PROCESSING}>
-                  Processing…
-                </Match>
-                <Match when={status().status === Status.CLIENT_UPLOADING}>
-                  Uploading…
-                </Match>
-                <Match when={status().status === Status.ERRORED}>Error</Match>
-                <Match when={status().status === Status.OK}>Ready</Match>
-              </Switch>
-            </button>
-          </Show>
-        </div>
-      </form>
-
-      <ClientOnly>
-        <Show when={encodingHistory.fileHistory.length > 0}>
-          <div class="space-y-3 rounded-box bg-base-200 p-4">
-            <h1 class="text-xl">History</h1>
-            <For each={encodingHistory.fileHistory.toReversed()}>
-              {(item) => (
-                <div class="bg-base-300 p-4">
-                  <div class="mb-2 flex items-center gap-2">
-                    <h3 class="font-semibold">{item.filename}</h3>
-                    <p class="text-base-content/50 text-xs">
-                      ({new Date(item.uploadedAt).toUTCString()})
-                    </p>
-                  </div>
-                  <div class="flex flex-wrap items-center gap-4">
-                    <Show
-                      when={item.expiresAt > Date.now()}
-                      fallback={
-                        <>
-                          <button type="button" class="btn btn-disabled">
-                            Expired
-                          </button>
-                          <p class="text-error text-sm">
-                            This file has expired.
-                          </p>
-                        </>
-                      }
-                    >
-                      <a
-                        href={item.objectKey}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class={cn(
-                          "btn btn-sm btn-info",
-                          item.expiresAt < Date.now() && "btn-disabled",
-                        )}
-                      >
-                        View
-                      </a>
-                      <p class="max-w-md truncate text-error text-sm">
-                        Expires at {new Date(item.expiresAt).toLocaleString()}
-                      </p>
-                    </Show>
-                  </div>
-                </div>
-              )}
-            </For>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              onclick={() => setEncodingHistory("fileHistory", [])}
-            >
-              Clear History
-            </button>
-          </div>
-        </Show>
-      </ClientOnly>
-    </div>
+      </section>
+    </main>
   );
 }
