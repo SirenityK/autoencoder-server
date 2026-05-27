@@ -1,11 +1,12 @@
+import { Link } from "@components/Link";
+import type { Translator } from "@lib/i18n";
+import { useI18n } from "@lib/i18n/context";
 import {
   buildOutArgs,
   getVisualQualityForCrf,
   type EncodeSettings,
-  SOCIAL_PRESET_LABELS,
   SOCIAL_PRESETS,
   SocialPreset,
-  VISUAL_QUALITY_OPTIONS,
 } from "@lib/utils/social-presets";
 import BadgeCheck from "lucide-solid/icons/badge-check";
 import Clapperboard from "lucide-solid/icons/clapperboard";
@@ -24,35 +25,31 @@ import { createMemo, createSignal, For, onCleanup, onMount } from "solid-js";
 const CODEC_CARDS = [
   {
     name: "H.264",
-    label: "Universal",
-    description:
-      "Reliable playback for everyday delivery, fast reviews, and broad compatibility.",
+    labelKey: "home.codecs.cards.h264.label",
+    descriptionKey: "home.codecs.cards.h264.description",
     icon: MonitorPlay,
-    badge: "safe pick",
+    badgeKey: "home.codecs.cards.h264.badge",
   },
   {
     name: "H.265",
-    label: "Compact",
-    description:
-      "Sharper files at smaller sizes when quality and storage both matter.",
+    labelKey: "home.codecs.cards.h265.label",
+    descriptionKey: "home.codecs.cards.h265.description",
     icon: Cpu,
-    badge: "efficient",
+    badgeKey: "home.codecs.cards.h265.badge",
   },
   {
     name: "AV1",
-    label: "Modern",
-    description:
-      "A forward-looking option for high compression and clean web distribution.",
+    labelKey: "home.codecs.cards.av1.label",
+    descriptionKey: "home.codecs.cards.av1.description",
     icon: Sparkles,
-    badge: "next-gen",
+    badgeKey: "home.codecs.cards.av1.badge",
   },
   {
     name: "AAC / Opus",
-    label: "Audio",
-    description:
-      "Tuned audio paths for voice, music, and compact social-ready exports.",
+    labelKey: "home.codecs.cards.audio.label",
+    descriptionKey: "home.codecs.cards.audio.description",
     icon: Music2,
-    badge: "balanced",
+    badgeKey: "home.codecs.cards.audio.badge",
   },
 ] as const;
 
@@ -64,22 +61,35 @@ const SOCIAL_PRESET_ORDER = [
 
 const SOCIAL_PRESET_DETAILS = {
   [SocialPreset.WhatsApp]: {
-    summary:
-      "Compact everyday sharing with capped frame rate and smaller files.",
+    summaryKey: "home.presets.details.whatsapp",
     icon: MessageCircle,
     accent: "badge-success",
   },
   [SocialPreset.Instagram]: {
-    summary: "Full HD social exports tuned for cleaner reels and feed posts.",
+    summaryKey: "home.presets.details.instagram",
     icon: Image,
     accent: "badge-secondary",
   },
   [SocialPreset.Messenger]: {
-    summary:
-      "Balanced HD clips for chat threads, previews, and quick handoffs.",
+    summaryKey: "home.presets.details.messenger",
     icon: RadioTower,
     accent: "badge-info",
   },
+} as const;
+
+const PRESET_LABEL_KEYS = {
+  [SocialPreset.WhatsApp]: "encode.presets.whatsapp",
+  [SocialPreset.Instagram]: "encode.presets.instagram",
+  [SocialPreset.Messenger]: "encode.presets.messenger",
+  [SocialPreset.Custom]: "encode.presets.custom",
+} as const;
+
+const VISUAL_QUALITY_LABEL_KEYS = {
+  "visually-lossless": "encode.options.visualQuality.visuallyLossless",
+  good: "encode.options.visualQuality.good",
+  "not-usually-noticeable": "encode.options.visualQuality.notUsuallyNoticeable",
+  "low-quality": "encode.options.visualQuality.lowQuality",
+  "low-quality-meme": "encode.options.visualQuality.lowQualityMeme",
 } as const;
 
 function formatArgs(settings: EncodeSettings): string {
@@ -88,27 +98,33 @@ function formatArgs(settings: EncodeSettings): string {
     .join(" ");
 }
 
-function formatResolution(settings: EncodeSettings): string {
+function formatResolution(settings: EncodeSettings, t: Translator): string {
   return settings.video.resolution === "source"
-    ? "Source"
+    ? t("encode.options.source")
     : `${settings.video.resolution}p`;
 }
 
-function visualQualityLabel(settings: EncodeSettings): string {
+function visualQualityLabel(settings: EncodeSettings, t: Translator): string {
   const quality = getVisualQualityForCrf({
     crf: settings.video.crf,
     codec: settings.video.videoCodec,
   });
-  const option = VISUAL_QUALITY_OPTIONS.find((item) => item.value === quality);
-  return option?.label ?? `CRF ${settings.video.crf}`;
+  return quality
+    ? t(VISUAL_QUALITY_LABEL_KEYS[quality])
+    : `CRF ${settings.video.crf}`;
 }
 
-function presetSettingsLabels(settings: EncodeSettings) {
+function presetSettingsLabels(settings: EncodeSettings, t: Translator) {
   return [
-    { label: formatResolution(settings), enabled: true },
-    { label: visualQualityLabel(settings), enabled: true },
+    { label: formatResolution(settings, t), enabled: true },
+    { label: visualQualityLabel(settings, t), enabled: true },
     { label: settings.video.videoCodec, enabled: true },
-    { label: `${settings.audio.audioBitrate} kbps audio`, enabled: true },
+    {
+      label: t("home.preview.audioKbps", {
+        bitrate: settings.audio.audioBitrate,
+      }),
+      enabled: true,
+    },
     { label: settings.outputExtension.toUpperCase(), enabled: true },
   ];
 }
@@ -121,11 +137,12 @@ function randomPresetIndex(current: number): number {
 }
 
 export default function Page() {
+  const { t } = useI18n();
   const [presetIndex, setPresetIndex] = createSignal(0);
   const activePreset = createMemo(() => SOCIAL_PRESET_ORDER[presetIndex()]);
   const activeSettings = createMemo(() => SOCIAL_PRESETS[activePreset()]);
-  const activePresetLabel = createMemo(
-    () => SOCIAL_PRESET_LABELS[activePreset()],
+  const activePresetLabel = createMemo(() =>
+    t(PRESET_LABEL_KEYS[activePreset()]),
   );
 
   onMount(() => {
@@ -143,25 +160,23 @@ export default function Page() {
           <div class="max-w-3xl">
             <div class="badge badge-primary badge-lg gap-2">
               <span class="size-2 animate-pulse rounded-full bg-primary-content" />
-              Social presets are live
+              {t("home.hero.badge")}
             </div>
 
             <h1 class="mt-6 text-balance font-black text-5xl leading-none tracking-tight sm:text-6xl lg:text-7xl">
-              Turn heavy videos into clean, shareable files.
+              {t("home.hero.title")}
             </h1>
             <p class="mt-6 max-w-2xl text-base-content/70 text-lg leading-8">
-              Optiflow gives creators and teams a focused encoding surface: pick
-              a destination preset, adjust quality when needed, and export
-              without wrestling with command-line rituals.
+              {t("home.hero.copy")}
             </p>
 
             <div class="mt-8 flex flex-wrap gap-3">
-              <a href="/encode" class="btn btn-primary">
-                Open encoder
+              <Link href="/encode" class="btn btn-primary">
+                {t("home.hero.openEncoder")}
                 <MoveRight class="size-4" />
-              </a>
+              </Link>
               <a href="#presets" class="btn btn-outline">
-                See presets
+                {t("home.hero.seePresets")}
               </a>
             </div>
 
@@ -170,17 +185,23 @@ export default function Page() {
                 <div class="stat-figure text-primary">
                   <Clapperboard class="size-8" />
                 </div>
-                <div class="stat-title">Presets</div>
+                <div class="stat-title">
+                  {t("home.hero.stats.presetsTitle")}
+                </div>
                 <div class="stat-value text-2xl">3</div>
-                <div class="stat-desc">WhatsApp, Instagram, Messenger</div>
+                <div class="stat-desc">{t("home.hero.stats.presetsDesc")}</div>
               </div>
               <div class="stat">
                 <div class="stat-figure text-secondary">
                   <SlidersHorizontal class="size-8" />
                 </div>
-                <div class="stat-title">Controls</div>
-                <div class="stat-value text-2xl">Precise</div>
-                <div class="stat-desc">quality, size, speed</div>
+                <div class="stat-title">
+                  {t("home.hero.stats.controlsTitle")}
+                </div>
+                <div class="stat-value text-2xl">
+                  {t("home.hero.stats.controlsValue")}
+                </div>
+                <div class="stat-desc">{t("home.hero.stats.controlsDesc")}</div>
               </div>
             </div>
           </div>
@@ -193,10 +214,12 @@ export default function Page() {
                     <div class="flex items-center justify-between gap-4">
                       <div>
                         <p class="text-neutral-content/60 text-xs uppercase tracking-widest">
-                          live preset
+                          {t("home.hero.livePreset")}
                         </p>
                         <h2 class="card-title text-2xl">
-                          {activePresetLabel()} export
+                          {t("home.hero.exportLabel", {
+                            preset: activePresetLabel(),
+                          })}
                         </h2>
                       </div>
                       <BadgeCheck class="size-6 text-success" />
@@ -223,7 +246,9 @@ export default function Page() {
                       </pre>
                       <pre data-prefix=">" class="text-success">
                         <code>
-                          {activePresetLabel()} export is almost ready
+                          {t("home.hero.readyLine", {
+                            preset: activePresetLabel(),
+                          })}
                         </code>
                       </pre>
                     </div>
@@ -232,9 +257,7 @@ export default function Page() {
 
                 <div class="alert alert-info mt-4">
                   <Gauge class="size-5" />
-                  <span>
-                    Presets set the baseline; advanced controls stay available.
-                  </span>
+                  <span>{t("home.hero.alert")}</span>
                 </div>
               </div>
             </div>
@@ -248,14 +271,14 @@ export default function Page() {
       >
         <div class="mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-10 lg:grid-cols-[0.82fr_1fr]">
           <div>
-            <div class="badge badge-secondary badge-lg">Preset library</div>
+            <div class="badge badge-secondary badge-lg">
+              {t("home.presets.badge")}
+            </div>
             <h2 class="mt-5 max-w-2xl text-balance font-black text-4xl leading-tight sm:text-5xl">
-              Pick the destination, then let Optiflow shape the export.
+              {t("home.presets.title")}
             </h2>
             <p class="mt-5 max-w-xl text-base-content/70 leading-7">
-              The encoder now includes real social presets that select sensible
-              resolution, quality, frame-rate, audio, and container defaults
-              before you touch advanced settings.
+              {t("home.presets.copy")}
             </p>
           </div>
 
@@ -281,14 +304,14 @@ export default function Page() {
                           </div>
                         </div>
                         <h3 class="card-title mt-3">
-                          {SOCIAL_PRESET_LABELS[preset]}
+                          {t(PRESET_LABEL_KEYS[preset])}
                         </h3>
                         <p class="text-base-content/70 text-sm leading-6">
-                          {SOCIAL_PRESET_DETAILS[preset].summary}
+                          {t(SOCIAL_PRESET_DETAILS[preset].summaryKey)}
                         </p>
                         <div class="mt-2 flex flex-wrap gap-2">
                           <For
-                            each={presetSettingsLabels(settings).slice(0, 3)}
+                            each={presetSettingsLabels(settings, t).slice(0, 3)}
                           >
                             {(setting) => (
                               <div class="badge badge-outline">
@@ -298,9 +321,9 @@ export default function Page() {
                           </For>
                         </div>
                         <div class="card-actions mt-4">
-                          <a href="/encode" class="btn btn-primary btn-sm">
-                            Use preset
-                          </a>
+                          <Link href="/encode" class="btn btn-primary btn-sm">
+                            {t("home.presets.usePreset")}
+                          </Link>
                         </div>
                       </div>
                     </div>
@@ -316,15 +339,17 @@ export default function Page() {
         <div class="mx-auto w-full max-w-7xl">
           <div class="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div class="badge badge-accent badge-lg">Featured codecs</div>
+              <div class="badge badge-accent badge-lg">
+                {t("home.codecs.badge")}
+              </div>
               <h2 class="mt-5 text-balance font-black text-4xl leading-tight sm:text-5xl">
-                Choose the right engine for the file you need.
+                {t("home.codecs.title")}
               </h2>
             </div>
-            <a href="/encode" class="btn btn-primary">
-              Try a codec
+            <Link href="/encode" class="btn btn-primary">
+              {t("home.codecs.cta")}
               <MoveRight class="size-4" />
-            </a>
+            </Link>
           </div>
 
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -340,14 +365,18 @@ export default function Page() {
                             <Icon class="size-6" />
                           </div>
                         </div>
-                        <div class="badge badge-outline">{codec.badge}</div>
+                        <div class="badge badge-outline">
+                          {t(codec.badgeKey)}
+                        </div>
                       </div>
                       <h3 class="card-title mt-4">
                         {codec.name}
-                        <span class="badge badge-secondary">{codec.label}</span>
+                        <span class="badge badge-secondary">
+                          {t(codec.labelKey)}
+                        </span>
                       </h3>
                       <p class="text-base-content/70 text-sm leading-6">
-                        {codec.description}
+                        {t(codec.descriptionKey)}
                       </p>
                     </div>
                   </div>
@@ -362,15 +391,13 @@ export default function Page() {
         <div class="mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-10 lg:grid-cols-[0.85fr_1fr]">
           <div>
             <div class="badge badge-primary badge-lg">
-              Live settings preview
+              {t("home.preview.badge")}
             </div>
             <h2 class="mt-5 max-w-2xl text-balance font-black text-4xl leading-tight sm:text-5xl">
-              Technical when you want it. Friendly when you do not.
+              {t("home.preview.title")}
             </h2>
             <p class="mt-5 max-w-xl text-base-content/70 leading-7">
-              The preset strip explains what is changing without forcing
-              everyone to read ffmpeg flags. The command remains there for
-              people who want the exact output.
+              {t("home.preview.copy")}
             </p>
           </div>
 
@@ -379,20 +406,22 @@ export default function Page() {
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-base-content/50 text-xs uppercase tracking-widest">
-                    generated args preview
+                    {t("home.preview.generatedArgs")}
                   </p>
                   <h3 class="font-bold text-2xl">
-                    {activePresetLabel()} preset
+                    {t("home.preview.presetLabel", {
+                      preset: activePresetLabel(),
+                    })}
                   </h3>
                 </div>
                 <div class="badge badge-success gap-2">
                   <span class="loading loading-ring loading-xs" />
-                  rotating presets
+                  {t("home.preview.rotating")}
                 </div>
               </div>
 
               <div class="flex flex-wrap gap-2">
-                <For each={presetSettingsLabels(activeSettings())}>
+                <For each={presetSettingsLabels(activeSettings(), t)}>
                   {(setting) => (
                     <button
                       type="button"

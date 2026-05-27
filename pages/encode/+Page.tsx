@@ -1,3 +1,5 @@
+import type { Translator } from "@lib/i18n";
+import { useI18n } from "@lib/i18n/context";
 import { cn, pollUntilDone, uploadFileToPresignedUrl } from "@lib/utils";
 import {
   AudioCodec,
@@ -18,12 +20,11 @@ import {
   getVisualQualityCrf,
   getVisualQualityForCrf,
   markMatchingSocialPreset,
-  socialPresetSettings,
-  SOCIAL_PRESET_LABELS,
   SocialPreset,
+  socialPresetSettings,
   VIDEO_DESCRIPTORS,
   VISUAL_QUALITY_OPTIONS,
-  type VisualQuality,
+  VisualQuality,
 } from "@lib/utils/social-presets";
 import {
   ErrorVariant,
@@ -56,35 +57,48 @@ import {
 
 // ─── Data Maps ────────────────────────────────────────────────────────────────
 
-const VIDEO_CODEC_LABELS: Record<VideoCodec, string> = {
-  [VideoCodec.H264]: "H.264 (libx264)",
-  [VideoCodec.H265]: "H.265 (libx265)",
-  [VideoCodec.AV1]: "AV1 (libsvtav1)",
-};
+const VIDEO_CODEC_LABEL_KEYS = {
+  [VideoCodec.H264]: "encode.options.videoCodec.h264",
+  [VideoCodec.H265]: "encode.options.videoCodec.h265",
+  [VideoCodec.AV1]: "encode.options.videoCodec.av1",
+} as const;
 
-const AUDIO_CODEC_LABELS: Record<AudioCodec, string> = {
-  [AudioCodec.Opus]: "Opus (libopus)",
-  [AudioCodec.AAC]: "AAC",
-  [AudioCodec.FDKAAC]: "AAC (Fraunhofer)",
-  [AudioCodec.EAC3]: "E-AC3 (Dolby Digital+)",
-  [AudioCodec.MP3]: "MP3 (libmp3lame)",
-};
+const AUDIO_CODEC_LABEL_KEYS = {
+  [AudioCodec.Opus]: "encode.options.audioCodec.opus",
+  [AudioCodec.AAC]: "encode.options.audioCodec.aac",
+  [AudioCodec.FDKAAC]: "encode.options.audioCodec.fdkaac",
+  [AudioCodec.EAC3]: "encode.options.audioCodec.eac3",
+  [AudioCodec.MP3]: "encode.options.audioCodec.mp3",
+} as const;
 
-const FRAMERATE_LABELS: Record<FrameRate, string> = {
-  [FrameRate.Source]: "Source",
-  [FrameRate.NTSC]: "NTSC (29.97)",
-  [FrameRate.NTSC_CAPPED]: "NTSC cap (source or 29.97)",
-  [FrameRate.NTSC_FILM]: "NTSC Film (23.976)",
-  [FrameRate.PAL]: "PAL (25)",
-  [FrameRate.FLUID]: "Fluid (60)",
-  [FrameRate.MINIMAL]: "Minimal (6)",
-};
+const FRAMERATE_LABEL_KEYS = {
+  [FrameRate.Source]: "encode.options.frameRate.source",
+  [FrameRate.NTSC]: "encode.options.frameRate.ntsc",
+  [FrameRate.NTSC_CAPPED]: "encode.options.frameRate.ntscCapped",
+  [FrameRate.NTSC_FILM]: "encode.options.frameRate.ntscFilm",
+  [FrameRate.PAL]: "encode.options.frameRate.pal",
+  [FrameRate.FLUID]: "encode.options.frameRate.fluid",
+  [FrameRate.MINIMAL]: "encode.options.frameRate.minimal",
+} as const;
+
+const SOCIAL_PRESET_LABEL_KEYS = {
+  [SocialPreset.WhatsApp]: "encode.presets.whatsapp",
+  [SocialPreset.Instagram]: "encode.presets.instagram",
+  [SocialPreset.Messenger]: "encode.presets.messenger",
+  [SocialPreset.Custom]: "encode.presets.custom",
+} as const;
+
+const VISUAL_QUALITY_LABEL_KEYS = {
+  [VisualQuality.VisuallyLossless]:
+    "encode.options.visualQuality.visuallyLossless",
+  [VisualQuality.Good]: "encode.options.visualQuality.good",
+  [VisualQuality.NotUsuallyNoticeable]:
+    "encode.options.visualQuality.notUsuallyNoticeable",
+  [VisualQuality.LowQuality]: "encode.options.visualQuality.lowQuality",
+  [VisualQuality.LowQualityMeme]: "encode.options.visualQuality.lowQualityMeme",
+} as const;
 
 // ─── Option arrays (Base) ─────────────────────────────────────────────────────
-
-const AUDIO_CODECS = (
-  Object.entries(AUDIO_CODEC_LABELS) as Entries<typeof AUDIO_CODEC_LABELS>
-).map(([value, label]) => ({ value, label }));
 
 const COLOR_DEPTHS = [
   { value: ColorDepth.BIT_8, label: "8-bit (yuv420p)" },
@@ -92,11 +106,21 @@ const COLOR_DEPTHS = [
   { value: ColorDepth.BIT_12, label: "12-bit (yuv420p12le)" },
 ];
 
-const DECODERS = [
-  { value: "", label: "Software (CPU)" },
-  { value: Decoder.CUDA, label: "CUDA (NVIDIA)" },
-  { value: Decoder.VAAPI, label: "VAAPI (Intel/AMD)" },
-] as const;
+function audioCodecs(t: Translator) {
+  return (
+    Object.entries(AUDIO_CODEC_LABEL_KEYS) as Entries<
+      typeof AUDIO_CODEC_LABEL_KEYS
+    >
+  ).map(([value, labelKey]) => ({ value, label: t(labelKey) }));
+}
+
+function decoders(t: Translator) {
+  return [
+    { value: "", label: t("encode.options.decoder.software") },
+    { value: Decoder.CUDA, label: t("encode.options.decoder.cuda") },
+    { value: Decoder.VAAPI, label: t("encode.options.decoder.vaapi") },
+  ] as const;
+}
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
@@ -125,6 +149,7 @@ function FieldLabel(props: {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Page() {
+  const { locale, t } = useI18n();
   const [settings, setSettings] = createStore<EncodeSettings>({
     ...socialPresetSettings(SocialPreset.WhatsApp),
   });
@@ -183,6 +208,8 @@ export default function Page() {
       codec: settings.video.videoCodec,
     }),
   );
+  const audioCodecOptions = createMemo(() => audioCodecs(t));
+  const decoderOptions = createMemo(() => decoders(t));
 
   // Validation Signals
   const crfValid = () =>
@@ -296,7 +323,8 @@ export default function Page() {
       setStatus({
         status: Status.ERRORED,
         errorVariant: ErrorVariant.UNKNOWN,
-        message: err instanceof Error ? err.message : "Unknown error",
+        message:
+          err instanceof Error ? err.message : t("encode.errors.unknown"),
       });
     }
   }
@@ -315,19 +343,19 @@ export default function Page() {
         <div class="mb-1 flex items-center gap-3">
           <div class="size-2 animate-pulse rounded-full bg-primary" />
           <span class="text-xs text-zinc-500 uppercase tracking-widest">
-            ffmpeg encoder
+            {t("encode.header.eyebrow")}
           </span>
         </div>
-        <h1 class="font-semibold text-3xl">Video Encode</h1>
-        <p class="mt-1 text-sm text-zinc-500">
-          Configure and dispatch an ffmpeg encoding job to the worker queue.
-        </p>
+        <h1 class="font-semibold text-3xl">{t("encode.header.title")}</h1>
+        <p class="mt-1 text-sm text-zinc-500">{t("encode.header.copy")}</p>
       </div>
 
       <form onsubmit={handleSubmit} class="space-y-5">
         {/* File input */}
         <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Input File</legend>
+          <legend class="fieldset-legend">
+            {t("encode.sections.inputFile")}
+          </legend>
           <input
             type="file"
             name="file"
@@ -343,10 +371,12 @@ export default function Page() {
 
         {/* Social preset controls */}
         <fieldset class="fieldset bg-base-300 p-4">
-          <legend class="fieldset-legend">Export Profile</legend>
+          <legend class="fieldset-legend">
+            {t("encode.sections.exportProfile")}
+          </legend>
           <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
-              <FieldLabel>Preset</FieldLabel>
+              <FieldLabel>{t("encode.fields.preset")}</FieldLabel>
               <select
                 class="select"
                 value={settings.socialPreset}
@@ -359,19 +389,21 @@ export default function Page() {
                   applySocialPreset(preset);
                 }}
               >
-                {objectEntries(SOCIAL_PRESET_LABELS).map(([value, label]) => (
-                  <option
-                    selected={value === settings.socialPreset}
-                    value={value}
-                  >
-                    {label}
-                  </option>
-                ))}
+                {objectEntries(SOCIAL_PRESET_LABEL_KEYS).map(
+                  ([value, labelKey]) => (
+                    <option
+                      selected={value === settings.socialPreset}
+                      value={value}
+                    >
+                      {t(labelKey)}
+                    </option>
+                  ),
+                )}
               </select>
             </div>
 
             <div>
-              <FieldLabel>Resolution</FieldLabel>
+              <FieldLabel>{t("encode.fields.resolution")}</FieldLabel>
               <select
                 name="resolution"
                 id="resolution"
@@ -393,20 +425,20 @@ export default function Page() {
                       value={resolution}
                     >
                       {resolution === Resolution.SOURCE
-                        ? "Source"
+                        ? t("encode.options.source")
                         : `${resolution}p`}
                     </option>
                   ))}
               </select>
               <Show when={settings.socialPreset === SocialPreset.WhatsApp}>
                 <p class="label text-warning">
-                  480p is good enough for everyday sharing.
+                  {t("encode.hints.whatsappResolution")}
                 </p>
               </Show>
             </div>
 
             <div>
-              <FieldLabel>Visual Quality</FieldLabel>
+              <FieldLabel>{t("encode.fields.visualQuality")}</FieldLabel>
               <select
                 class="select"
                 value={currentVisualQuality()}
@@ -430,13 +462,13 @@ export default function Page() {
                       selected={quality.value === currentVisualQuality()}
                       value={quality.value}
                     >
-                      {quality.label}
+                      {t(VISUAL_QUALITY_LABEL_KEYS[quality.value])}
                     </option>
                   )}
                 </For>
                 <Show when={currentVisualQuality() === ""}>
                   <option selected value="">
-                    Custom
+                    {t("encode.options.visualQuality.custom")}
                   </option>
                 </Show>
               </select>
@@ -451,16 +483,20 @@ export default function Page() {
             checked={advancedSettings()}
             onchange={(e) => setAdvancedSettings(e.currentTarget.checked)}
           />
-          <span class="label-text font-semibold">Advanced settings</span>
+          <span class="label-text font-semibold">
+            {t("encode.fields.advancedSettings")}
+          </span>
         </label>
 
         <Show when={advancedSettings()}>
           {/* Video settings */}
           <fieldset class="fieldset bg-base-300 p-4">
-            <legend class="fieldset-legend">Video</legend>
+            <legend class="fieldset-legend">
+              {t("encode.sections.video")}
+            </legend>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <FieldLabel>Codec</FieldLabel>
+                <FieldLabel>{t("encode.fields.codec")}</FieldLabel>
                 <select
                   class="select"
                   name="codec"
@@ -485,19 +521,21 @@ export default function Page() {
                     }));
                   }}
                 >
-                  {objectEntries(VIDEO_CODEC_LABELS).map(([key, label]) => (
-                    <option
-                      selected={key === settings.video.videoCodec}
-                      value={key}
-                    >
-                      {label}
-                    </option>
-                  ))}
+                  {objectEntries(VIDEO_CODEC_LABEL_KEYS).map(
+                    ([key, labelKey]) => (
+                      <option
+                        selected={key === settings.video.videoCodec}
+                        value={key}
+                      >
+                        {t(labelKey)}
+                      </option>
+                    ),
+                  )}
                 </select>
               </div>
 
               <div>
-                <FieldLabel>Preset</FieldLabel>
+                <FieldLabel>{t("encode.fields.preset")}</FieldLabel>
                 <select
                   class="select"
                   disabled={availableVideoPresets().length === 0}
@@ -512,7 +550,9 @@ export default function Page() {
                 >
                   <Show
                     when={availableVideoPresets().length > 0}
-                    fallback={<option>— no presets available —</option>}
+                    fallback={
+                      <option>{t("encode.hints.noPresetsAvailable")}</option>
+                    }
                   >
                     <For each={availableVideoPresets()}>
                       {(preset) => (
@@ -529,7 +569,9 @@ export default function Page() {
               </div>
 
               <div>
-                <FieldLabel hint="optional">Tune</FieldLabel>
+                <FieldLabel hint={t("encode.hints.optional")}>
+                  {t("encode.fields.tune")}
+                </FieldLabel>
                 <select
                   class="select"
                   value={settings.video.tune.toString()}
@@ -542,7 +584,7 @@ export default function Page() {
                     }));
                   }}
                 >
-                  <option value="">— none —</option>
+                  <option value="">{t("encode.hints.none")}</option>
                   <For each={availableVideoTunes()}>
                     {(Tune) => <option value={Tune}>{Tune}</option>}
                   </For>
@@ -550,7 +592,10 @@ export default function Page() {
               </div>
 
               <div>
-                <FieldLabel prefix="value: " hint={settings.video.crf}>
+                <FieldLabel
+                  prefix={t("encode.hints.value")}
+                  hint={settings.video.crf}
+                >
                   CRF{" "}
                   <span class="text-base-content/30">
                     ({currentVideoDescriptor().crfMin}-
@@ -594,7 +639,7 @@ export default function Page() {
 
             <div class="mt-4 flex flex-wrap gap-6">
               <div>
-                <FieldLabel>Color Depth</FieldLabel>
+                <FieldLabel>{t("encode.fields.colorDepth")}</FieldLabel>
                 <div class="flex flex-wrap gap-2">
                   <For each={COLOR_DEPTHS}>
                     {(cd) => (
@@ -621,7 +666,7 @@ export default function Page() {
                 </div>
               </div>
               <div class="grid max-md:gap-2 md:ml-auto">
-                <FieldLabel>Optimize</FieldLabel>
+                <FieldLabel>{t("encode.fields.optimize")}</FieldLabel>
                 <input
                   type="checkbox"
                   class="toggle toggle-info md:ml-auto"
@@ -638,7 +683,7 @@ export default function Page() {
                 />
               </div>
               <div>
-                <FieldLabel>Frame Rate</FieldLabel>
+                <FieldLabel>{t("encode.fields.frameRate")}</FieldLabel>
                 <select
                   name="framerate"
                   id="framerate"
@@ -657,7 +702,7 @@ export default function Page() {
                       selected={value === settings.video.framerate}
                       value={value}
                     >
-                      {FRAMERATE_LABELS[value]}
+                      {t(FRAMERATE_LABEL_KEYS[value])}
                     </option>
                   ))}
                 </select>
@@ -667,10 +712,12 @@ export default function Page() {
 
           {/* Audio settings */}
           <fieldset class="fieldset bg-base-300 p-4">
-            <legend class="fieldset-legend">Audio</legend>
+            <legend class="fieldset-legend">
+              {t("encode.sections.audio")}
+            </legend>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
-                <FieldLabel>Codec</FieldLabel>
+                <FieldLabel>{t("encode.fields.codec")}</FieldLabel>
                 <select
                   class="select"
                   value={settings.audio.audioCodec}
@@ -682,7 +729,7 @@ export default function Page() {
                     }));
                   }}
                 >
-                  {AUDIO_CODECS.map((codec) => (
+                  {audioCodecOptions().map((codec) => (
                     <option
                       selected={codec.value === settings.audio.audioCodec}
                       value={codec.value}
@@ -694,7 +741,9 @@ export default function Page() {
               </div>
 
               <div>
-                <FieldLabel hint="optional">Profile</FieldLabel>
+                <FieldLabel hint={t("encode.hints.optional")}>
+                  {t("encode.fields.profile")}
+                </FieldLabel>
                 <select
                   class={cn(
                     "select",
@@ -712,7 +761,7 @@ export default function Page() {
                     }));
                   }}
                 >
-                  <option value="">— none —</option>
+                  <option value="">{t("encode.hints.none")}</option>
                   <For each={availableAudioProfiles()}>
                     {(profile) => <option value={profile}>{profile}</option>}
                   </For>
@@ -721,7 +770,7 @@ export default function Page() {
 
               <div>
                 <FieldLabel hint={settings.audio.audioBitrate} suffix=" kbps">
-                  Bitrate
+                  {t("encode.fields.bitrate")}
                 </FieldLabel>
                 <input
                   type="number"
@@ -763,10 +812,12 @@ export default function Page() {
 
           {/* Hardware & filters */}
           <fieldset class="fieldset bg-base-300 p-4">
-            <legend class="fieldset-legend">Hardware & Filters</legend>
+            <legend class="fieldset-legend">
+              {t("encode.sections.hardwareFilters")}
+            </legend>
             <div class="flex flex-wrap items-end gap-4 *:flex-1">
               <div>
-                <FieldLabel>HW Decoder</FieldLabel>
+                <FieldLabel>{t("encode.fields.hwDecoder")}</FieldLabel>
                 <select
                   class="select"
                   value={settings.decoder}
@@ -779,18 +830,20 @@ export default function Page() {
                     }));
                   }}
                 >
-                  <For each={DECODERS}>
+                  <For each={decoderOptions()}>
                     {(d) => <option value={d.value}>{d.label}</option>}
                   </For>
                 </select>
               </div>
 
               <div>
-                <FieldLabel hint="optional">Drawtext overlay</FieldLabel>
+                <FieldLabel hint={t("encode.hints.optional")}>
+                  {t("encode.fields.drawtextOverlay")}
+                </FieldLabel>
                 <input
                   type="text"
                   class="input"
-                  placeholder="e.g. Test encode v2"
+                  placeholder={t("encode.hints.drawtextPlaceholder")}
                   value={settings.video.filters.drawtext}
                   oninput={(e) =>
                     updateSettingsWithPresetMatch((current) => ({
@@ -813,7 +866,7 @@ export default function Page() {
         {/* Args preview */}
         <div>
           <div class="mb-2 text-base-content/80 text-xs uppercase tracking-widest">
-            Generated args preview
+            {t("encode.fields.generatedArgsPreview")}
           </div>
           <div class="box-border bg-base-300">
             <p class="break-all p-4">
@@ -834,7 +887,7 @@ export default function Page() {
               target="_blank"
               class="btn btn-secondary"
             >
-              Download
+              {t("encode.actions.download")}
             </a>
           </Show>
           <Show
@@ -855,17 +908,21 @@ export default function Page() {
             >
               <Switch fallback={import.meta.env.DEV && Status[status().status]}>
                 <Match when={status().status === Status.CLIENT_IDLE}>
-                  Enqueue Job
+                  {t("encode.actions.enqueueJob")}
                   <MoveRight class="size-4" />
                 </Match>
                 <Match when={status().status === Status.CLIENT_PROCESSING}>
-                  Processing…
+                  {t("encode.actions.processing")}
                 </Match>
                 <Match when={status().status === Status.CLIENT_UPLOADING}>
-                  Uploading…
+                  {t("encode.actions.uploading")}
                 </Match>
-                <Match when={status().status === Status.ERRORED}>Error</Match>
-                <Match when={status().status === Status.OK}>Ready</Match>
+                <Match when={status().status === Status.ERRORED}>
+                  {t("encode.actions.error")}
+                </Match>
+                <Match when={status().status === Status.OK}>
+                  {t("encode.actions.ready")}
+                </Match>
               </Switch>
             </button>
           </Show>
@@ -875,14 +932,14 @@ export default function Page() {
       <ClientOnly>
         <Show when={encodingHistory.fileHistory.length > 0}>
           <div class="space-y-3 rounded-box bg-base-200 p-4">
-            <h1 class="text-xl">History</h1>
+            <h1 class="text-xl">{t("encode.history.title")}</h1>
             <For each={encodingHistory.fileHistory.toReversed()}>
               {(item) => (
                 <div class="bg-base-300 p-4">
                   <div class="mb-2 flex flex-wrap items-center gap-2">
                     <h3 class="wrap-anywhere font-semibold">{item.filename}</h3>
                     <p class="text-base-content/50 text-xs">
-                      ({new Date(item.uploadedAt).toUTCString()})
+                      ({new Date(item.uploadedAt).toLocaleString(locale())})
                     </p>
                   </div>
                   <div class="flex flex-wrap items-center gap-4">
@@ -891,10 +948,10 @@ export default function Page() {
                       fallback={
                         <>
                           <button type="button" class="btn btn-disabled">
-                            Expired
+                            {t("encode.actions.expired")}
                           </button>
                           <p class="text-error text-sm">
-                            This file has expired.
+                            {t("encode.history.expiredMessage")}
                           </p>
                         </>
                       }
@@ -908,10 +965,14 @@ export default function Page() {
                           item.expiresAt < Date.now() && "btn-disabled",
                         )}
                       >
-                        View
+                        {t("encode.actions.view")}
                       </a>
                       <p class="max-w-md truncate text-error text-sm">
-                        Expires at {new Date(item.expiresAt).toLocaleString()}
+                        {t("encode.history.expiresAt", {
+                          date: new Date(item.expiresAt).toLocaleString(
+                            locale(),
+                          ),
+                        })}
                       </p>
                     </Show>
                   </div>
@@ -923,7 +984,7 @@ export default function Page() {
               class="btn btn-secondary"
               onclick={() => setEncodingHistory("fileHistory", [])}
             >
-              Clear History
+              {t("encode.actions.clearHistory")}
             </button>
           </div>
         </Show>
