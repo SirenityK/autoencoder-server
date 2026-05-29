@@ -1,17 +1,27 @@
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { QueueEvents } from "bullmq";
-import { encode } from "@server/encoder";
-import { Status, ErrorVariant } from "@lib/utils/types";
+import { join } from "node:path";
+import { localStorageSchema } from "@lib/utils/env";
 import {
   AudioCodec,
+  ColorDepth,
   FrameRate,
   Preset,
   Resolution,
   VideoCodec,
 } from "@lib/utils/ffmpeg";
+import { ErrorVariant, Status } from "@lib/utils/types";
+import { encode } from "@server/encoder";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
+import { QueueEvents } from "bullmq";
 import {
   buildOutArgs,
   getVisualQualityCrf,
@@ -33,6 +43,7 @@ import {
   objectExists,
   uploadWithPresignedUrl,
 } from "../helpers/s3";
+import * as v from "valibot";
 
 const TEST_TIMEOUT = 60_000;
 const VIDEO_TYPE = "video/mp4";
@@ -57,7 +68,7 @@ describe("social preset ffmpeg args", () => {
     expect(args.crf).toBe("28");
     expect(args.movflags).toBe("+faststart");
     expect(args["c:a"]).toBe(AudioCodec.AAC);
-    expect(args.vf).toContain("fps=min(30000/1001\\,source_fps)");
+    expect(args.vf).toContain("fps=min(ntsc\\,source_fps)");
     expect(args.vf).toContain("scale=w=-2:h='min(480\\,ih)':flags=lanczos");
     expect(args.vf).toContain("out_transfer=bt709");
     expect(args.vf).toContain("out_primaries=bt709");
@@ -108,6 +119,96 @@ describe("social preset ffmpeg args", () => {
     });
 
     expect(changedSettings.socialPreset).toBe(SocialPreset.Custom);
+  });
+});
+
+describe("encoding history storage", () => {
+  test("accepts history entries with selected settings and media metadata", () => {
+    const parsed = v.parse(localStorageSchema, {
+      fileHistory: [
+        {
+          filename: "source.mp4",
+          type: VIDEO_TYPE,
+          uploadedAt: 1_717_171_717,
+          objectKey: "https://example.test/output.mp4",
+          expiresAt: 1_717_175_317,
+          settings: {
+            socialPreset: SocialPreset.WhatsApp,
+            outputExtension: "mp4",
+            video: {
+              codec: VideoCodec.H264,
+              resolution: Resolution.SD,
+              preset: Preset.Slow,
+              tune: "",
+              crf: 28,
+              frameRate: FrameRate.NTSC_CAPPED,
+              colorDepth: ColorDepth.BIT_8,
+            },
+            audio: {
+              codec: AudioCodec.AAC,
+              profile: "",
+              bitrate: 128,
+            },
+          },
+          sourceMetadata: {
+            duration: 3.5,
+            fileSize: 123_456,
+            totalBitRate: 282_185,
+            containerExtension: "mp4",
+            resolution: {
+              width: 320,
+              height: 180,
+            },
+            frameRate: 30,
+            videoStreams: [
+              {
+                index: 0,
+                codec: "h264",
+                width: 320,
+                height: 180,
+                frameRate: 30,
+                bitRate: null,
+                pixelFormat: "yuv420p",
+              },
+            ],
+            audioStreams: [],
+            subtitleStreams: [],
+          },
+          outputEstimate: {
+            targetVideoCodec: VideoCodec.H264,
+            targetAudioCodec: AudioCodec.AAC,
+            targetResolution: {
+              width: 320,
+              height: 180,
+            },
+            targetFrameRate: 30,
+            targetAudioBitrateKbps: 128,
+            knownTotalBitrate: null,
+            estimatedSizeBytes: null,
+            estimatedSizeReason: "video_bitrate_unknown",
+            outputExtension: "mp4",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.fileHistory).toHaveLength(1);
+  });
+
+  test("keeps older history entries without metadata valid", () => {
+    const parsed = v.parse(localStorageSchema, {
+      fileHistory: [
+        {
+          filename: "older-source.mp4",
+          type: VIDEO_TYPE,
+          uploadedAt: 1_717_171_717,
+          objectKey: "https://example.test/older-output.mp4",
+          expiresAt: 1_717_175_317,
+        },
+      ],
+    });
+
+    expect(parsed.fileHistory).toHaveLength(1);
   });
 });
 
@@ -307,6 +408,7 @@ describe("production encoding path", () => {
       const {
         onCheckJobStatus,
         onEncodeVideo,
+        onInspectUploadedSource,
         onRequestDownload,
         onRequestUpload,
       } = await import("../../pages/encode/+Page.telefunc");
@@ -330,6 +432,32 @@ describe("production encoding path", () => {
         file: Bun.file(sourcePath),
         type: VIDEO_TYPE,
       });
+
+      const sourceInspection = await onInspectUploadedSource({
+        objectKey: upload.objectKey,
+        outputExtension: "mp4",
+        settings: {
+          outArgs: {
+            "c:v": VideoCodec.H264,
+            preset: Preset.Ultrafast,
+            crf: "30",
+            "c:a": AudioCodec.AAC,
+            "b:a": "96k",
+          },
+        },
+      });
+      expect(sourceInspection).toEqual(
+        expect.objectContaining({
+          status: Status.OK,
+          sourceMetadata: expect.objectContaining({
+            duration: expect.any(Number),
+          }),
+          outputEstimate: expect.objectContaining({
+            targetVideoCodec: VideoCodec.H264,
+            targetAudioCodec: AudioCodec.AAC,
+          }),
+        }),
+      );
 
       const missingStatus = await onCheckJobStatus({
         jobId: `missing-${runId}`,
@@ -361,6 +489,32 @@ describe("production encoding path", () => {
       expect(encodeResponse.status).toBe(Status.OK);
       expect(encodeResponse.jobId).toBeTruthy();
       expect(encodeResponse.objectKey).toEndWith(".mp4");
+      expect(encodeResponse.sourceMetadata).toEqual(
+        expect.objectContaining({
+          duration: expect.any(Number),
+          containerExtension: "mp4",
+          resolution: expect.objectContaining({
+            width: expect.any(Number),
+            height: expect.any(Number),
+          }),
+          frameRate: expect.any(Number),
+          videoStreams: expect.arrayContaining([
+            expect.objectContaining({
+              codec: expect.any(String),
+            }),
+          ]),
+        }),
+      );
+      expect(encodeResponse.outputEstimate).toEqual(
+        expect.objectContaining({
+          targetVideoCodec: VideoCodec.H264,
+          targetAudioCodec: AudioCodec.AAC,
+          outputExtension: "mp4",
+          targetAudioBitrateKbps: 96,
+          estimatedSizeBytes: null,
+          estimatedSizeReason: "video_bitrate_unknown",
+        }),
+      );
       if (encodeResponse.objectKey) objectKeys.add(encodeResponse.objectKey);
 
       const queueEvents = new QueueEvents("video-encoding", {
@@ -395,6 +549,51 @@ describe("production encoding path", () => {
           expiresAt: expect.any(Number),
         }),
       );
+    },
+    TEST_TIMEOUT,
+  );
+
+  liveTest(
+    "does not enqueue a job when source probing fails",
+    async () => {
+      const { onEncodeVideo } = await import(
+        "../../pages/encode/+Page.telefunc"
+      );
+      const videoEncodeQueue = await loadVideoEncodeQueue();
+      const workers = await videoEncodeQueue.getWorkersCount();
+      expect(workers).toBeGreaterThan(0);
+
+      const addSpy = spyOn(videoEncodeQueue, "add").mockImplementation(
+        mock(async () => {
+          throw new Error("queue.add should not be called");
+        }),
+      );
+
+      try {
+        const response = await onEncodeVideo({
+          objectKey: `test-${runId}-missing-probe-source.mp4`,
+          outputExtension: "mp4",
+          settings: {
+            outArgs: {
+              "c:v": VideoCodec.H264,
+              preset: Preset.Ultrafast,
+              crf: "30",
+              "c:a": AudioCodec.AAC,
+              "b:a": "96k",
+            },
+          },
+        });
+
+        expect(response).toEqual(
+          expect.objectContaining({
+            status: Status.ERRORED,
+            errorVariant: ErrorVariant.UNKNOWN,
+          }),
+        );
+        expect(addSpy).not.toHaveBeenCalled();
+      } finally {
+        addSpy.mockRestore();
+      }
     },
     TEST_TIMEOUT,
   );

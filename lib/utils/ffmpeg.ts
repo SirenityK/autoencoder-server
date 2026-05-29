@@ -287,6 +287,70 @@ export const MediaInfoSchema = v.object({
   subtitle_tracks: v.optional(v.array(SubtitleInfoSchema), []),
 });
 
+export const SourceVideoStreamSchema = v.object({
+  index: v.pipe(v.number(), v.integer()),
+  codec: v.string(),
+  width: v.nullable(v.pipe(v.number(), v.integer())),
+  height: v.nullable(v.pipe(v.number(), v.integer())),
+  frameRate: v.nullable(v.number()),
+  bitRate: v.nullable(v.pipe(v.number(), v.integer())),
+  pixelFormat: v.nullable(v.string()),
+});
+
+export const SourceAudioStreamSchema = v.object({
+  index: v.pipe(v.number(), v.integer()),
+  codec: v.string(),
+  channels: v.nullable(v.pipe(v.number(), v.integer())),
+  sampleRate: v.nullable(v.pipe(v.number(), v.integer())),
+  bitRate: v.nullable(v.pipe(v.number(), v.integer())),
+  language: v.nullable(v.string()),
+});
+
+export const SourceSubtitleStreamSchema = v.object({
+  index: v.pipe(v.number(), v.integer()),
+  codec: v.string(),
+  language: v.nullable(v.string()),
+  title: v.nullable(v.string()),
+});
+
+export const SourceMediaMetadataSchema = v.object({
+  duration: v.nullable(v.number()),
+  fileSize: v.nullable(v.pipe(v.number(), v.integer())),
+  totalBitRate: v.nullable(v.pipe(v.number(), v.integer())),
+  containerExtension: v.nullable(v.string()),
+  resolution: v.nullable(
+    v.object({
+      width: v.pipe(v.number(), v.integer()),
+      height: v.pipe(v.number(), v.integer()),
+    }),
+  ),
+  frameRate: v.nullable(v.number()),
+  videoStreams: v.array(SourceVideoStreamSchema),
+  audioStreams: v.array(SourceAudioStreamSchema),
+  subtitleStreams: v.array(SourceSubtitleStreamSchema),
+});
+
+export const OutputEstimateSchema = v.object({
+  targetVideoCodec: v.string(),
+  targetAudioCodec: v.string(),
+  targetResolution: v.nullable(
+    v.object({
+      width: v.pipe(v.number(), v.integer()),
+      height: v.pipe(v.number(), v.integer()),
+    }),
+  ),
+  targetFrameRate: v.nullable(v.number()),
+  targetAudioBitrateKbps: v.nullable(v.number()),
+  knownTotalBitrate: v.nullable(v.pipe(v.number(), v.integer())),
+  estimatedSizeBytes: v.nullable(v.pipe(v.number(), v.integer())),
+  estimatedSizeReason: v.picklist([
+    "known_total_bitrate",
+    "video_bitrate_unknown",
+    "duration_unknown",
+  ]),
+  outputExtension: v.picklist(["mkv", "mp4", "webm"]),
+});
+
 // Automatically extract TS types from the schemas (100% DRY)
 export type VCodecType = v.InferOutput<typeof VideoCodecSchema>;
 export type ACodecType = v.InferOutput<typeof AudioCodecSchema>;
@@ -295,6 +359,15 @@ export type AudioInfo = v.InferOutput<typeof AudioInfoSchema>;
 export type SubtitleInfo = v.InferOutput<typeof SubtitleInfoSchema>;
 export type ContainerInfo = v.InferOutput<typeof ContainerInfoSchema>;
 export type MediaInfo = v.InferOutput<typeof MediaInfoSchema>;
+export type SourceVideoStream = v.InferOutput<typeof SourceVideoStreamSchema>;
+export type SourceAudioStream = v.InferOutput<typeof SourceAudioStreamSchema>;
+export type SourceSubtitleStream = v.InferOutput<
+  typeof SourceSubtitleStreamSchema
+>;
+export type SourceMediaMetadata = v.InferOutput<
+  typeof SourceMediaMetadataSchema
+>;
+export type OutputEstimate = v.InferOutput<typeof OutputEstimateSchema>;
 
 export interface EncodeOptions {
   inputs: string[];

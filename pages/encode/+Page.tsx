@@ -7,8 +7,10 @@ import {
   ColorDepth,
   Decoder,
   FrameRate,
+  type OutputEstimate,
   Preset,
   Resolution,
+  type SourceMediaMetadata,
   type Tune,
   VideoCodec,
 } from "@lib/utils/ffmpeg";
@@ -51,6 +53,7 @@ import { ClientOnly } from "vike-solid/ClientOnly";
 import {
   onCheckJobStatus,
   onEncodeVideo,
+  onInspectUploadedSource,
   onRequestDownload,
   onRequestUpload,
 } from "./+Page.telefunc";
@@ -97,6 +100,8 @@ const VISUAL_QUALITY_LABEL_KEYS = {
   [VisualQuality.LowQuality]: "encode.options.visualQuality.lowQuality",
   [VisualQuality.LowQualityMeme]: "encode.options.visualQuality.lowQualityMeme",
 } as const;
+
+const HISTORY_STORAGE_KEY = "local-storage-data";
 
 // ─── Option arrays (Base) ─────────────────────────────────────────────────────
 
@@ -146,6 +151,125 @@ function FieldLabel(props: {
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return "N/A";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number | null): string {
+  if (bytes === null) return "N/A";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unitIndex = 0;
+  let size = bytes;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatFrameRate(fps: number | null): string {
+  if (fps === null) return "N/A";
+  return `${fps.toFixed(2)} fps`;
+}
+
+function formatResolution(
+  res: { width: number; height: number } | null,
+): string {
+  if (res === null) return "N/A";
+  return `${res.width} x ${res.height}`;
+}
+
+function createHistoryItem({
+  file,
+  downloadUrl,
+  expiresAt,
+  settings,
+  sourceMetadata,
+  outputEstimate,
+}: {
+  file: File;
+  downloadUrl: string;
+  expiresAt: number;
+  settings: EncodeSettings;
+  sourceMetadata: SourceMediaMetadata | null;
+  outputEstimate: OutputEstimate | null;
+}): LocalStorageData["fileHistory"][number] {
+  return {
+    filename: file.name,
+    type: file.type,
+    uploadedAt: Date.now(),
+    objectKey: downloadUrl,
+    expiresAt,
+    settings: {
+      socialPreset: settings.socialPreset,
+      outputExtension: settings.outputExtension,
+      video: {
+        codec: settings.video.videoCodec,
+        resolution: settings.video.resolution,
+        preset: settings.video.preset,
+        tune: settings.video.tune,
+        crf: settings.video.crf,
+        frameRate: settings.video.framerate,
+        colorDepth: settings.video.colorDepth,
+      },
+      audio: {
+        codec: settings.audio.audioCodec,
+        profile: settings.audio.audioProfile,
+        bitrate: settings.audio.audioBitrate,
+      },
+    },
+    sourceMetadata,
+    outputEstimate,
+  };
+}
+
+function createHistoryStorage(): Storage | undefined {
+  const storage = globalThis.localStorage;
+  if (!storage) return undefined;
+
+  const historyStorage = Object.create(storage) as Storage;
+  historyStorage.getItem = (key: string) => {
+    const storedValue = storage.getItem(key);
+    if (storedValue !== null) return storedValue;
+
+    const legacyValue = findLegacyHistoryValue(storage);
+    if (legacyValue !== null) {
+      storage.setItem(key, legacyValue);
+    }
+    return legacyValue;
+  };
+
+  return historyStorage;
+}
+
+function findLegacyHistoryValue(storage: Storage): string | null {
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (!key?.startsWith("storage-")) continue;
+
+    const value = storage.getItem(key);
+    if (!value) continue;
+
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        Array.isArray((parsed as { fileHistory?: unknown }).fileHistory)
+      ) {
+        return value;
+      }
+    } catch (_error) {}
+  }
+
+  return null;
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Page() {
@@ -161,13 +285,16 @@ export default function Page() {
     status: Status.CLIENT_IDLE,
     message: "",
   });
+  const [sourceMetadata, setSourceMetadata] =
+    createSignal<SourceMediaMetadata | null>(null);
+  const [outputEstimate, setOutputEstimate] =
+    createSignal<OutputEstimate | null>(null);
   const [encodingHistory, setEncodingHistory] = makePersisted(
-    createStore<LocalStorageData>(
-      { fileHistory: [] },
-      {
-        name: "local-storage-data",
-      },
-    ),
+    createStore<LocalStorageData>({ fileHistory: [] }),
+    {
+      name: HISTORY_STORAGE_KEY,
+      storage: createHistoryStorage(),
+    },
   );
 
   // Dynamically resolved descriptor objects
@@ -254,6 +381,26 @@ export default function Page() {
       setStatus({ status: Status.CLIENT_UPLOADING });
       await uploadFileToPresignedUrl(f, uploadLink.presignedUrl);
       setStatus({ status: Status.CLIENT_PROCESSING });
+      const inspectedSource = await onInspectUploadedSource({
+        objectKey: uploadLink.objectKey,
+        outputExtension: settings.outputExtension,
+        settings: { outArgs },
+      });
+
+      if (inspectedSource.status === Status.ERRORED) {
+        setStatus({
+          status: inspectedSource.status,
+          errorVariant: inspectedSource.errorVariant,
+          message: inspectedSource.message,
+        });
+        return;
+      }
+
+      const inspectedSourceMetadata = inspectedSource.sourceMetadata ?? null;
+      const inspectedOutputEstimate = inspectedSource.outputEstimate ?? null;
+      setSourceMetadata(inspectedSourceMetadata);
+      setOutputEstimate(inspectedOutputEstimate);
+
       const result = await onEncodeVideo({
         objectKey: uploadLink.objectKey,
         outputExtension: settings.outputExtension,
@@ -265,6 +412,8 @@ export default function Page() {
 
       switch (result.status) {
         case Status.OK: {
+          setSourceMetadata(result.sourceMetadata ?? inspectedSourceMetadata);
+          setOutputEstimate(result.outputEstimate ?? inspectedOutputEstimate);
           setStatus({
             status: Status.CLIENT_PROCESSING,
             jobId: result.jobId,
@@ -297,17 +446,19 @@ export default function Page() {
             });
             setStatus({ status: Status.CLIENT_IDLE });
             setDownloadableKey(url.presignedUrl);
-            setEncodingHistory(
-              "fileHistory",
-              encodingHistory.fileHistory.length,
-              {
-                filename: f.name,
-                type: f.type,
-                uploadedAt: Date.now(),
-                objectKey: url.presignedUrl,
+            setEncodingHistory("fileHistory", (history) => [
+              ...history,
+              createHistoryItem({
+                file: f,
+                downloadUrl: url.presignedUrl,
                 expiresAt: url.expiresAt,
-              },
-            );
+                settings: cloneSettings(settings),
+                sourceMetadata:
+                  result.sourceMetadata ?? inspectedSourceMetadata,
+                outputEstimate:
+                  result.outputEstimate ?? inspectedOutputEstimate,
+              }),
+            ]);
           }
           break;
         }
@@ -364,10 +515,120 @@ export default function Page() {
             onchange={(e) => {
               const f = e.currentTarget.files?.item(0) ?? null;
               setFile(f);
+              setSourceMetadata(null);
+              setOutputEstimate(null);
               setStatus({ status: Status.CLIENT_IDLE, message: "" });
             }}
           />
         </fieldset>
+
+        {/* Source Metadata */}
+        <Show when={sourceMetadata()}>
+          {(meta) => (
+            <fieldset class="fieldset bg-base-300 p-4">
+              <legend class="fieldset-legend">
+                {t("encode.sections.sourceMetadata.title")}
+              </legend>
+              <div class="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.duration")}
+                  </FieldLabel>
+                  <span class="text-sm">{formatDuration(meta().duration)}</span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.resolution")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {formatResolution(meta().resolution)}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.frameRate")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {formatFrameRate(meta().frameRate)}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.fileSize")}
+                  </FieldLabel>
+                  <span class="text-sm">{formatBytes(meta().fileSize)}</span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.container")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {meta().containerExtension ?? "N/A"}
+                  </span>
+                </div>
+              </div>
+
+              <div class="mt-4 space-y-3">
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.videoStreams")}{" "}
+                    {t("encode.sections.sourceMetadata.streamCount", {
+                      count: String(meta().videoStreams.length),
+                    })}
+                  </FieldLabel>
+                  <For each={meta().videoStreams}>
+                    {(stream) => (
+                      <div class="ml-2 text-base-content/70 text-sm">
+                        #{stream.index}: {stream.codec}
+                        {stream.width !== null &&
+                          stream.height !== null &&
+                          ` — ${stream.width}x${stream.height}`}
+                      </div>
+                    )}
+                  </For>
+                </div>
+
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.sourceMetadata.audioStreams")}{" "}
+                    {t("encode.sections.sourceMetadata.streamCount", {
+                      count: String(meta().audioStreams.length),
+                    })}
+                  </FieldLabel>
+                  <For each={meta().audioStreams}>
+                    {(stream) => (
+                      <div class="ml-2 text-base-content/70 text-sm">
+                        #{stream.index}: {stream.codec}
+                        {stream.channels !== null && ` — ${stream.channels}ch`}
+                        {stream.sampleRate !== null &&
+                          ` @ ${stream.sampleRate} Hz`}
+                      </div>
+                    )}
+                  </For>
+                </div>
+
+                <Show when={meta().subtitleStreams.length > 0}>
+                  <div>
+                    <FieldLabel>
+                      {t("encode.sections.sourceMetadata.subtitleStreams")}{" "}
+                      {t("encode.sections.sourceMetadata.streamCount", {
+                        count: String(meta().subtitleStreams.length),
+                      })}
+                    </FieldLabel>
+                    <For each={meta().subtitleStreams}>
+                      {(stream) => (
+                        <div class="ml-2 text-base-content/70 text-sm">
+                          #{stream.index}: {stream.codec}
+                          {stream.language !== null && ` — ${stream.language}`}
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </fieldset>
+          )}
+        </Show>
 
         {/* Social preset controls */}
         <fieldset class="fieldset bg-base-300 p-4">
@@ -878,6 +1139,77 @@ export default function Page() {
           </div>
         </div>
 
+        {/* Output Estimate */}
+        <Show when={outputEstimate()}>
+          {(est) => (
+            <fieldset class="fieldset bg-base-300 p-4">
+              <legend class="fieldset-legend">
+                {t("encode.sections.outputEstimate.title")}
+              </legend>
+              <div class="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.targetVideoCodec")}
+                  </FieldLabel>
+                  <span class="text-sm">{est().targetVideoCodec}</span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.targetAudioCodec")}
+                  </FieldLabel>
+                  <span class="text-sm">{est().targetAudioCodec}</span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.targetResolution")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {est().targetResolution !== null
+                      ? formatResolution(est().targetResolution)
+                      : t("encode.sections.outputEstimate.source")}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.targetFrameRate")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {est().targetFrameRate !== null
+                      ? formatFrameRate(est().targetFrameRate)
+                      : t("encode.sections.outputEstimate.sourceFps")}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.audioBitrate")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {est().targetAudioBitrateKbps !== null
+                      ? `${est().targetAudioBitrateKbps} kbps`
+                      : "N/A"}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.estimatedSize")}
+                  </FieldLabel>
+                  <span class="text-sm">
+                    {est().estimatedSizeBytes !== null
+                      ? formatBytes(est().estimatedSizeBytes)
+                      : t("encode.sections.outputEstimate.unavailable")}
+                  </span>
+                </div>
+                <div>
+                  <FieldLabel>
+                    {t("encode.sections.outputEstimate.outputContainer")}
+                  </FieldLabel>
+                  <span class="text-sm">{est().outputExtension}</span>
+                </div>
+              </div>
+            </fieldset>
+          )}
+        </Show>
+
         {/* Submit & status */}
         <div class="flex flex-wrap items-center gap-4">
           <Show when={downloadableKey()}>
@@ -941,6 +1273,75 @@ export default function Page() {
                     <p class="text-base-content/50 text-xs">
                       ({new Date(item.uploadedAt).toLocaleString(locale())})
                     </p>
+                  </div>
+                  <div class="mb-3 flex flex-wrap gap-2">
+                    <Show when={item.settings}>
+                      {(historySettings) => (
+                        <>
+                          <span class="badge badge-primary">
+                            {t(
+                              SOCIAL_PRESET_LABEL_KEYS[
+                                historySettings().socialPreset
+                              ],
+                            )}
+                          </span>
+                          <span class="badge badge-outline">
+                            {historySettings().video.codec}
+                          </span>
+                          <span class="badge badge-outline">
+                            CRF {historySettings().video.crf}
+                          </span>
+                          <span class="badge badge-outline">
+                            {historySettings().video.resolution ===
+                            Resolution.SOURCE
+                              ? t("encode.options.source")
+                              : `${historySettings().video.resolution}p`}
+                          </span>
+                          <span class="badge badge-outline">
+                            {historySettings().audio.codec}{" "}
+                            {historySettings().audio.bitrate} kbps
+                          </span>
+                        </>
+                      )}
+                    </Show>
+                  </div>
+                  <div class="mb-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+                    <div>
+                      <FieldLabel>
+                        {t("encode.sections.sourceMetadata.duration")}
+                      </FieldLabel>
+                      <span>
+                        {formatDuration(item.sourceMetadata?.duration ?? null)}
+                      </span>
+                    </div>
+                    <div>
+                      <FieldLabel>
+                        {t("encode.sections.sourceMetadata.resolution")}
+                      </FieldLabel>
+                      <span>
+                        {formatResolution(
+                          item.sourceMetadata?.resolution ?? null,
+                        )}
+                      </span>
+                    </div>
+                    <div>
+                      <FieldLabel>
+                        {t("encode.sections.sourceMetadata.fileSize")}
+                      </FieldLabel>
+                      <span>
+                        {formatBytes(item.sourceMetadata?.fileSize ?? null)}
+                      </span>
+                    </div>
+                    <div>
+                      <FieldLabel>
+                        {t("encode.sections.outputEstimate.estimatedSize")}
+                      </FieldLabel>
+                      <span>
+                        {formatBytes(
+                          item.outputEstimate?.estimatedSizeBytes ?? null,
+                        )}
+                      </span>
+                    </div>
                   </div>
                   <div class="flex flex-wrap items-center gap-4">
                     <Show

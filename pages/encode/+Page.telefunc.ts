@@ -1,14 +1,56 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { EncodeOptions } from "@lib/utils/ffmpeg";
 import { ErrorVariant, type ServerResponse, Status } from "@lib/utils/types";
-import { presignUrl } from "@server/env";
+import { estimateOutputFromSource, probeSourceMedia } from "@server/encoder";
+import { presignUrl, pullS3File } from "@server/env";
 import { videoEncodeQueue } from "@server/queue";
 
 interface EncodeVideoTelefuncArgs {
   objectKey: string;
   outputExtension?: "mkv" | "mp4" | "webm";
   settings?: Pick<EncodeOptions, "hwdecode" | "outArgs">;
+}
+
+interface UploadedSourceTelefuncArgs {
+  objectKey: string;
+  outputExtension?: "mkv" | "mp4" | "webm";
+  settings?: Pick<EncodeOptions, "outArgs">;
+}
+
+async function inspectUploadedSource({
+  objectKey,
+  outputExtension = "mkv",
+  settings,
+}: UploadedSourceTelefuncArgs) {
+  let localFilePath: string | null = null;
+
+  try {
+    localFilePath = await pullS3File(objectKey);
+    const sourceMetadata = await probeSourceMedia(localFilePath);
+    const outputEstimate = estimateOutputFromSource({
+      source: sourceMetadata,
+      outputExtension,
+      outArgs: settings?.outArgs ?? {},
+    });
+
+    return {
+      status: Status.OK,
+      sourceMetadata,
+      outputEstimate,
+    } satisfies ServerResponse;
+  } catch (_error) {
+    return {
+      status: Status.ERRORED,
+      errorVariant: ErrorVariant.UNKNOWN,
+      message: "Unable to probe uploaded source media",
+    } satisfies ServerResponse;
+  } finally {
+    if (localFilePath !== null) {
+      await rm(localFilePath, { force: true });
+    }
+  }
 }
 
 export async function onRequestUpload({
@@ -35,6 +77,12 @@ export async function onRequestUpload({
     expiresIn: 30,
   });
   return { status: Status.OK, presignedUrl, objectKey };
+}
+
+export async function onInspectUploadedSource(
+  args: UploadedSourceTelefuncArgs,
+) {
+  return inspectUploadedSource(args);
 }
 
 export async function onRequestDownload({ objectKey }: { objectKey: string }) {
@@ -115,7 +163,21 @@ export async function onEncodeVideo({
     } satisfies ServerResponse;
   }
 
+  const source = await inspectUploadedSource({
+    objectKey,
+    outputExtension,
+    settings,
+  });
+
+  if (source.status === Status.ERRORED) return source;
+
   const outputPath = `encoded_${file.name}.${outputExtension}`;
+  const outArgs = settings?.outArgs ?? {};
+  const outputEstimate = estimateOutputFromSource({
+    source: source.sourceMetadata,
+    outputExtension,
+    outArgs,
+  });
 
   const job = await videoEncodeQueue.add("encode", {
     objectKey,
@@ -135,5 +197,7 @@ export async function onEncodeVideo({
     jobId: job.id,
     status: Status.OK,
     objectKey: outputPath,
+    sourceMetadata: source.sourceMetadata,
+    outputEstimate,
   } satisfies ServerResponse;
 }

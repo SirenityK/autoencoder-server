@@ -2,14 +2,14 @@ import type { InferInput, ObjectEntries, ObjectSchema } from "valibot";
 import * as v from "valibot";
 import {
   AudioCodec,
-  AudioProfile,
   ColorDepth,
   FrameRate,
-  Preset,
   Resolution,
-  Tune,
+  SourceMediaMetadataSchema,
   VideoCodec,
+  OutputEstimateSchema,
 } from "./ffmpeg";
+import { SocialPreset } from "./social-presets";
 
 export function parseEnv<
   const T extends ObjectSchema<ObjectEntries, undefined>,
@@ -39,22 +39,46 @@ export const localStorageSchema = v.object({
       type: v.string(),
       uploadedAt: v.number(),
       expiresAt: v.number(),
-      meta: v.object({
-        video: v.object({
-          codec: v.enum(VideoCodec),
-          resolution: v.enum(Resolution),
-          preset: v.enum(Preset),
-          tune: v.enum(Tune),
-          crf: v.pipe(v.number(), v.minValue(0)),
-          framerate: v.enum(FrameRate),
-          ColorDepth: v.enum(ColorDepth),
+      settings: v.optional(
+        v.object({
+          socialPreset: v.enum(SocialPreset),
+          outputExtension: v.picklist(["mkv", "mp4", "webm"]),
+          video: v.object({
+            codec: v.enum(VideoCodec),
+            resolution: v.enum(Resolution),
+            preset: v.union([v.string(), v.number()]),
+            tune: v.union([v.string(), v.number()]),
+            crf: v.pipe(v.number(), v.minValue(0)),
+            frameRate: v.enum(FrameRate),
+            colorDepth: v.enum(ColorDepth),
+          }),
+          audio: v.object({
+            codec: v.enum(AudioCodec),
+            profile: v.string(),
+            bitrate: v.pipe(v.number(), v.minValue(0)), // in kbps
+          }),
         }),
-        audio: v.object({
-          codec: v.enum(AudioCodec),
-          profile: v.enum(AudioProfile),
-          bitrate: v.pipe(v.number(), v.minValue(0)), // in kbps
+      ),
+      sourceMetadata: v.optional(v.nullable(SourceMediaMetadataSchema)),
+      outputEstimate: v.optional(v.nullable(OutputEstimateSchema)),
+      meta: v.optional(
+        v.object({
+          video: v.object({
+            codec: v.enum(VideoCodec),
+            resolution: v.enum(Resolution),
+            preset: v.union([v.string(), v.number()]),
+            tune: v.union([v.string(), v.number()]),
+            crf: v.pipe(v.number(), v.minValue(0)),
+            framerate: v.enum(FrameRate),
+            colorDepth: v.enum(ColorDepth),
+          }),
+          audio: v.object({
+            codec: v.enum(AudioCodec),
+            profile: v.string(),
+            bitrate: v.pipe(v.number(), v.minValue(0)), // in kbps
+          }),
         }),
-      }),
+      ),
     }),
   ),
 });

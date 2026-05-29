@@ -1,7 +1,11 @@
 import type { Job, JobProgress } from "bullmq";
 import type * as v from "valibot";
 import type { localStorageSchema } from "./env";
-import type { EncodeOptions } from "./ffmpeg";
+import type {
+  EncodeOptions,
+  OutputEstimate,
+  SourceMediaMetadata,
+} from "./ffmpeg";
 
 export enum Status {
   OK,
@@ -29,6 +33,8 @@ type ServerResponseBase = {
   expiresAt?: number;
   jobId?: Job["id"] | null;
   message?: string;
+  sourceMetadata?: SourceMediaMetadata;
+  outputEstimate?: OutputEstimate;
 };
 
 type OkServerResponse = ServerResponseBase & {
